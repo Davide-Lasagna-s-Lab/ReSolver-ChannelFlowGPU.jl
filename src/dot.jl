@@ -39,7 +39,7 @@ dot(a, b, method)
 struct TwoStage{A} <: DotMethod
     cache::NTuple{2, A}
 
-    function TwoStage(sz::NTuple{D, Int}, order, ::Type{T}=Float32) where {D, T}
+    function TwoStage(sz::NTuple{D, Int}, order::NTuple, ::Type{T}=Float32) where {D, T}
         weight_vec   = CuArray{T}([i == 1 ? one(T) : T(2) for i in 1:sz[order[1]]])
         shape        = ntuple(d -> d == order[1] ? sz[order[1]] : 1, D)
         weights      = CUDA.zeros(T, sz...)
@@ -89,7 +89,7 @@ struct Atomic{THREADS, D, A} <: DotMethod
      nelem::Int32
     blocks::Int32
 
-    function Atomic(a, ::Type{T}=Float32) where {T}
+    function Atomic(a::ProjectedField, ::Type{T}=Float32) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
@@ -147,7 +147,7 @@ struct Shared{THREADS, D, A} <: DotMethod
      nelem::Int32
     blocks::Int32
 
-    function Shared(a, ::Type{T}=Float32) where {T}
+    function Shared(a::ProjectedField, ::Type{T}=Float32) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
@@ -356,7 +356,7 @@ LinearAlgebra.dot(a::ProjectedField{G, M, <:CuArray},
 Two-stage weighted reduction: elementwise weighted product into `intermediate`,
 then `sum`. Stays entirely on device until the final scalar transfer.
 """
-function _dot(a, b, cache::TwoStage)
+function _dot(a::CuArray, b::CuArray, cache::TwoStage)
     weights, intermediate = cache.cache
  @. intermediate          = weights*real(dot(a, b))
     return sum(intermediate)/2
@@ -413,7 +413,8 @@ GPU kernel: each thread computes one weighted elementwise product and
 accumulates into `result` via `CUDA.@atomic`. Weight is 1 for `I[2]==1`,
 2 otherwise.
 """
-function _dot_atomic_kernel!(result, a, b, nelem, sz)
+# ! doesn't contain transform ORDER information, so is cannot be transplanted to NSEBase.jl as is
+function _dot_atomic_kernel!(result, a::CuDeviceArray, b::CuDeviceArray, nelem::Int32, sz::NTuple)
     idx = (blockIdx().x - 1i32) * blockDim().x + threadIdx().x
     idx > nelem && return nothing
 
@@ -432,7 +433,7 @@ GPU kernel: shared memory tree reduction within each block followed by a single
 `CUDA.@atomic` per block. `THREADS` must be a power of 2 and match the launch
 thread count. Shared memory is statically allocated as `THREADS` × `sizeof(T)`.
 """
-function _dot_shared_kernel!(result, a, b, nelem, sz, ::Val{THREADS}) where {THREADS}
+function _dot_shared_kernel!(result, a::CuDeviceArray, b::CuDeviceArray, nelem::Int32, sz::NTuple, ::Val{THREADS}) where {THREADS}
     shared = @cuStaticSharedMem(Float32, THREADS)
     tid    = threadIdx().x
     idx    = (blockIdx().x - 1i32) * blockDim().x + tid

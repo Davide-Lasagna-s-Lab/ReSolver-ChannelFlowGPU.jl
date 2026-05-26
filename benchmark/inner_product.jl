@@ -74,8 +74,7 @@ function run_benchmarks()
 
         # Full end-to-end time — includes launch overhead and scalar transfer
         t_host = @belapsed begin
-            dot($ad, $bd, $method)
-            CUDA.synchronize()
+            CUDA.@sync dot($ad, $bd, $method)
         end seconds=2
 
         # Allocation check — should be near zero after fixes
