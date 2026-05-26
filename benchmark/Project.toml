@@ -1,0 +1,6 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+NSEBase = "9778a910-ce4d-423e-92be-12991f0cf10c"
+ReSolverChannelFlow = "ea847659-7271-4841-b0fc-79dd10df6815"
+ReSolverChannelFlowGPU = "cbbec004-2816-4a06-900b-d51f11be72b6"

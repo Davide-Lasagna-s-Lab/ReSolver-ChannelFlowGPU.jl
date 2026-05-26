@@ -1,0 +1,17 @@
+name = "ReSolverChannelFlowGPU"
+uuid = "cbbec004-2816-4a06-900b-d51f11be72b6"
+version = "0.1.0"
+authors = ["Thomas Burton <tburton5572@gmail.com>"]
+
+[workspace]
+projects = ["test", "benchmark"]
+
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NSEBase = "9778a910-ce4d-423e-92be-12991f0cf10c"
+ReSolverChannelFlow = "ea847659-7271-4841-b0fc-79dd10df6815"
+
+[compat]
+CUDA = "6.1.0"
+LinearAlgebra = "1.12.0"
