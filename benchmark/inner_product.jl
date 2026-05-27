@@ -19,8 +19,8 @@ function run_benchmarks()
     g = ChannelGrid(zeros(S[1]), S[2:end]...,
                     2π, 2π,
                     zeros(S[1], S[1]), zeros(S[1], S[1]),
-                    zeros(S[1]);
-                    adjoint_diff=false)
+                    zeros(S[1], S[1]), zeros(S[1], S[1]),
+                    zeros(S[1]))
     a = ProjectedField(g, randn(M, (S[2] >> 1) + 1, S[3], S[4]),
                           zeros(3*S[1], M, (S[2] >> 1) + 1, S[3], S[4]))
     b = ProjectedField(g, randn(M, (S[2] >> 1) + 1, S[3], S[4]),
@@ -110,8 +110,8 @@ function run_benchmarks()
         g = ChannelGrid(zeros(sz[1]), sz[2:end]...,
                         2π, 2π,
                         zeros(sz[1], sz[1]), zeros(sz[1], sz[1]),
-                        zeros(sz[1]);
-                        adjoint_diff=false)
+                        zeros(sz[1], sz[1]), zeros(sz[1], sz[1]),
+                        zeros(sz[1]))
         a_ = ProjectedField(g, randn(M, (sz[2] >> 1) + 1, sz[3], sz[4]),
                                zeros(3*sz[1], M, (sz[2] >> 1) + 1, sz[3], sz[4]))
         b_ = ProjectedField(g, randn(M, (sz[2] >> 1) + 1, sz[3], sz[4]),

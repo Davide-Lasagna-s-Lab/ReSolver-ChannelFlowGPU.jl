@@ -45,11 +45,11 @@ end
     end
 end
 
-CUDA.cu(g::ChannelGrid{S, T, ADJ}) where {S, T, ADJ} = ChannelGrid{S, Float32, ADJ}(CUDA.cu(g.y),
-                                                                                    CUDA.cu(g.Dy), CUDA.cu(g.Dy2),
-                                                                                    CUDA.cu(g.Dya), CUDA.cu(g.Dy2a),
-                                                                                    CUDA.cu(g.ws),
-                                                                                    Float32(g.α), Float32(g.β))
+CUDA.cu(g::ChannelGrid{S, T}) where {S, T} = ChannelGrid{S, Float32}(CUDA.cu(g.y),
+                                                                     CUDA.cu(g.D₁), CUDA.cu(g.D₂),
+                                                                     CUDA.cu(g.D₁⁺), CUDA.cu(g.D₂⁺),
+                                                                     CUDA.cu(g.ws),
+                                                                     Float32(g.α), Float32(g.β))
 
 CUDA.cu(u::FTField)                  =        FTField(CUDA.cu(g), CUDA.cu(parent(u)))
 CUDA.cu(u::Field)                    =          Field(CUDA.cu(g), CUDA.cu(parent(u)))
@@ -66,8 +66,6 @@ include("fft.jl")
 include("derivatives.jl")
 include("galerkin.jl")
 include("dot.jl")
-
-# custom derivative kernels (FDGrids.jl implementation + spectral derivative kernels)
-# projection and expansion
+# include("operators.jl")
 
 end
