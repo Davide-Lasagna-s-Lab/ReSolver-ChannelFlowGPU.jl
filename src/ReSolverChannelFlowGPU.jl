@@ -45,14 +45,41 @@ end
     end
 end
 
+using Adapt
+function Adapt.adapt_structure(to, g::ChannelGrid{S, T}) where {S, T}
+    y = Adapt.adapt_structure(to, g.y)
+    D₁ = Adapt.adapt_structure(to, g.D₁)
+    D₂ = Adapt.adapt_structure(to, g.D₂)
+    D₁⁺ = Adapt.adapt_structure(to, g.D₁⁺)
+    D₂⁺ = Adapt.adapt_structure(to, g.D₂⁺)
+    ws = Adapt.adapt_structure(to, g.ws)
+    α = Adapt.adapt_structure(to, g.α)
+    β = Adapt.adapt_structure(to, g.β)
+    return ChannelGrid{S, T}(y, D₁, D₂, D₁⁺, D₂⁺, ws, α, β)
+end
+
+Adapt.adapt_structure(to, u::FTField) =
+    FTField(Adapt.adapt_structure(to, grid(u)), Adapt.adapt_structure(to, parent(u)))
+
+Adapt.adapt_structure(to, u::VectorField{N}) where {N} =
+    VectorField([Adapt.adapt_structure(to, u[n]) for n in 1:N]...)
+
+function Adapt.adapt_structure(to, a::ProjectedField)
+    g = Adapt.adapt_structure(to, grid(a))
+    data = Adapt.adapt_structure(to, parent(a))
+    mds = Adapt.adapt_structure(to, modes(a))
+    return ProjectedField(g, data, mds)
+end
+
+
 CUDA.cu(g::ChannelGrid{S, T}) where {S, T} = ChannelGrid{S, Float32}(CUDA.cu(g.y),
                                                                      CUDA.cu(g.D₁), CUDA.cu(g.D₂),
                                                                      CUDA.cu(g.D₁⁺), CUDA.cu(g.D₂⁺),
                                                                      CUDA.cu(g.ws),
                                                                      Float32(g.α), Float32(g.β))
 
-CUDA.cu(u::FTField)                  =        FTField(CUDA.cu(g), CUDA.cu(parent(u)))
-CUDA.cu(u::Field)                    =          Field(CUDA.cu(g), CUDA.cu(parent(u)))
+CUDA.cu(u::FTField)                  =        FTField(CUDA.cu(grid(u)), CUDA.cu(parent(u)))
+CUDA.cu(u::Field)                    =          Field(CUDA.cu(grid(u)), CUDA.cu(parent(u)))
 CUDA.cu(u::VectorField{N}) where {N} =    VectorField([CUDA.cu(u[n]) for n in 1:N]...)
 CUDA.cu(a::ProjectedField)           = ProjectedField(CUDA.cu(grid(a)), CUDA.cu(parent(a)), CUDA.cu(modes(a)))
 

@@ -2,8 +2,6 @@ using CUDA
 using LinearAlgebra
 using BenchmarkTools
 
-import CUDA: i32
-
 using NSEBase,
       ReSolverChannelFlow,
       ReSolverChannelFlowGPU
@@ -13,18 +11,18 @@ using NSEBase,
 # ============================================================
 function run_benchmarks()
     # Problem size: (ny, nx, nz, nt)
-    S = (16, 33, 33, 33)
+    S = (33, 16, 33, 33)
     M = 4
     T = Float32
-    g = ChannelGrid(zeros(S[1]), S[2:end]...,
+    g = ChannelGrid(zeros(S[2]), S[1], S[3], S[4],
                     2π, 2π,
-                    zeros(S[1], S[1]), zeros(S[1], S[1]),
-                    zeros(S[1], S[1]), zeros(S[1], S[1]),
-                    zeros(S[1]))
-    a = ProjectedField(g, randn(M, (S[2] >> 1) + 1, S[3], S[4]),
-                          zeros(3*S[1], M, (S[2] >> 1) + 1, S[3], S[4]))
-    b = ProjectedField(g, randn(M, (S[2] >> 1) + 1, S[3], S[4]),
-                          zeros(3*S[1], M, (S[2] >> 1) + 1, S[3], S[4]))
+                    zeros(S[2], S[2]), zeros(S[2], S[2]),
+                    zeros(S[2], S[2]), zeros(S[2], S[2]),
+                    zeros(S[2]))
+    a = ProjectedField(g, randn(M, (S[1] >> 1) + 1, S[3], S[4]),
+                          zeros(3*S[2], M, (S[1] >> 1) + 1, S[3], S[4]))
+    b = ProjectedField(g, randn(M, (S[1] >> 1) + 1, S[3], S[4]),
+                          zeros(3*S[2], M, (S[1] >> 1) + 1, S[3], S[4]))
     ad = CUDA.cu(a)
     bd = CUDA.cu(b)
 
@@ -90,10 +88,10 @@ function run_benchmarks()
 
     # scaling sweep
     sizes = [
-        (8,  9, 25,   7),
-        (8, 25, 33,  13),
-        (8, 33, 65,  25),
-        (8, 65, 129, 65),
+        ( 9, 8, 25,   7),
+        (25, 8, 33,  13),
+        (33, 8, 65,  25),
+        (65, 8, 129, 65),
     ]
     Ms = [4, 4, 4, 8]
 
@@ -107,15 +105,15 @@ function run_benchmarks()
     println("-"^91)
 
     for (M, sz) in zip(Ms, sizes)
-        g = ChannelGrid(zeros(sz[1]), sz[2:end]...,
+        g = ChannelGrid(zeros(sz[2]), sz[1], sz[3], sz[4],
                         2π, 2π,
-                        zeros(sz[1], sz[1]), zeros(sz[1], sz[1]),
-                        zeros(sz[1], sz[1]), zeros(sz[1], sz[1]),
-                        zeros(sz[1]))
-        a_ = ProjectedField(g, randn(M, (sz[2] >> 1) + 1, sz[3], sz[4]),
-                               zeros(3*sz[1], M, (sz[2] >> 1) + 1, sz[3], sz[4]))
-        b_ = ProjectedField(g, randn(M, (sz[2] >> 1) + 1, sz[3], sz[4]),
-                               zeros(3*sz[1], M, (sz[2] >> 1) + 1, sz[3], sz[4]))
+                        zeros(sz[2], sz[2]), zeros(sz[2], sz[2]),
+                        zeros(sz[2], sz[2]), zeros(sz[2], sz[2]),
+                        zeros(sz[2]))
+        a_ = ProjectedField(g, randn(M, (sz[1] >> 1) + 1, sz[3], sz[4]),
+                               zeros(3*sz[2], M, (sz[1] >> 1) + 1, sz[3], sz[4]))
+        b_ = ProjectedField(g, randn(M, (sz[1] >> 1) + 1, sz[3], sz[4]),
+                               zeros(3*sz[2], M, (sz[1] >> 1) + 1, sz[3], sz[4]))
         ad_ = CUDA.cu(a_)
         bd_ = CUDA.cu(b_)
 

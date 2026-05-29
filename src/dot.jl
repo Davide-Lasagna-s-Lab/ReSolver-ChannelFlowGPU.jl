@@ -5,6 +5,8 @@
 # ---------------- #
 abstract type DotMethod end
 
+# TODO: add option to manually asign threads to all methods
+
 """
     TwoStage{A} <: DotMethod
 
@@ -48,9 +50,10 @@ struct TwoStage{A} <: DotMethod
         new{typeof(weights)}((weights, intermediate))
     end
 end
+TwoStage(a::ProjectedField) = TwoStage(size(a), NSEBase.fft_dims(grid(a)), real(eltype(a)))
 
 """
-    Atomic{THREADS, A} <: DotMethod
+    Atomic{THREADS, D, A} <: DotMethod
 
 Atomic accumulation dot product method for GPU-resident `ProjectedField` arrays.
 
@@ -103,7 +106,7 @@ struct Atomic{THREADS, D, A} <: DotMethod
 end
 
 """
-    Shared{THREADS, A} <: DotMethod
+    Shared{THREADS, D, A} <: DotMethod
 
 Shared memory tree-reduction dot product method for GPU-resident `ProjectedField`
 arrays.
@@ -166,9 +169,9 @@ struct Shared{THREADS, D, A} <: DotMethod
 end
 
 
-# ------------------------------------- #
-# trait-based method dispatch utilities #
-# ------------------------------------- #
+# --------------------------------------- #
+# auto-tuning for optimal method dispatch #
+# --------------------------------------- #
 const DOT_METHODS = Dict{Type, DotMethod}()
 
 """
@@ -277,7 +280,7 @@ reset_dot_cache!(a)    # clear only the method cached for typeof(a)
 See also: [`initialise_dot!`](@ref)
 """
 reset_dot_cache!() = empty!(DOT_METHODS)
-reset_dot_cache!(a::ProjectedField) = delete!(DOT_METHODS, typeof(a))
+reset_dot_cache!(::P) where {P<:ProjectedField} = delete!(DOT_METHODS, P)
 
 
 # ------------------------------- #
@@ -301,8 +304,7 @@ call and returns the cached result on all subsequent calls. Call
 auto-tuning cost is paid upfront.
 
 # Arguments
-- `a`, `b`: `ProjectedField`s on the same grid `G` with the same spectral
-  ordering `M` and `CuArray` storage.
+- `a`, `b`: `ProjectedField`s on the same grid `G` and `CuArray` storage.
 
 # Returns
 - A host-side scalar of the real element type `T`.
@@ -316,8 +318,9 @@ s = dot(a, b)   # uses cached optimal method, returns Float32
 See also: [`initialise_dot!`](@ref), [`TwoStage`](@ref), [`Shared`](@ref),
 [`Atomic`](@ref)
 """
-LinearAlgebra.dot(a::ProjectedField{G, M, <:CuArray},
-                  b::ProjectedField{G, M, <:CuArray}) where {G, M} =
+# ! method ambiguity with base dot product
+LinearAlgebra.dot(a::ProjectedField{G, M, A},
+                  b::ProjectedField{G, M, A}) where {G, M, A<:CuArray} =
     dot(a, b, dot_method(a))
 
 """
