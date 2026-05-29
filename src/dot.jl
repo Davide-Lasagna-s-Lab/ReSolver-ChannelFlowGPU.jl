@@ -201,6 +201,7 @@ Logs the winner and all trial times via `@info`.
 
     autotune_dot(a) -> best::DotMethod
 """
+# TODO: allow option to turn off info
 function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
     pa = parent(a)
     sz = size(pa)
@@ -208,9 +209,9 @@ function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
 
     # Construct all candidate methods
     candidates = DotMethod[
-        Shared(a, T),
-        TwoStage(sz, NSEBase.fft_dims(grid(a)), T),
-        Atomic(a, T),
+        TwoStage(sz, NSEBase.fft_dims(grid(a)), real(T)),
+        Atomic(a, real(T)),
+        Shared(a, real(T)),
     ]
 
     # Warmup all candidates — triggers compilation
@@ -318,9 +319,8 @@ s = dot(a, b)   # uses cached optimal method, returns Float32
 See also: [`initialise_dot!`](@ref), [`TwoStage`](@ref), [`Shared`](@ref),
 [`Atomic`](@ref)
 """
-# ! method ambiguity with base dot product
 LinearAlgebra.dot(a::ProjectedField{G, M, A},
-                  b::ProjectedField{G, M, A}) where {G, M, A<:CuArray} =
+                  b::ProjectedField{G, M, A}) where {G<:AbstractGrid, M, A<:CuArray} =
     dot(a, b, dot_method(a))
 
 """

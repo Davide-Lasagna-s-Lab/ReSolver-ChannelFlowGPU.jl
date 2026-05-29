@@ -305,7 +305,7 @@ See also: [`initialise_project!`](@ref), [`ProjectBroadcast`](@ref),
 [`ProjectLoop`](@ref), [`ProjectShared`](@ref)
 """
 NSEBase.project!(a::ProjectedField{G, M, <:CuArray},
-                 u::VectorField{N, <:FTField{G, <:CuArray}}) where {G, M, N} =
+                 u::VectorField{N, <:FTField{G, <:CuArray}}) where {G<:AbstractGrid, M, N} =
     NSEBase.project!(a, u, project_method(a, y))
 
 """
