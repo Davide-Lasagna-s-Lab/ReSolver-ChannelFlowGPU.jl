@@ -5,8 +5,6 @@
 # ---------------- #
 abstract type DotMethod end
 
-# TODO: add option to manually asign threads to all methods
-
 """
     TwoStage{A} <: DotMethod
 
@@ -86,22 +84,27 @@ method = Atomic(a, Float32)
 dot(a, b, method)
 ```
 """
-struct Atomic{THREADS, D, A} <: DotMethod
+struct Atomic{D, A} <: DotMethod
     result::A
         sz::NTuple{D, Int32}
      nelem::Int32
+   threads::Int32
     blocks::Int32
 
-    function Atomic(a::ProjectedField, ::Type{T}=Float32) where {T}
+    function Atomic(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
         nelem = Int32(prod(sz))
-        threads = optimal_threads(_dot_atomic_kernel!,
-                                  result, pa, pa,
-                                  nelem, sz;
-                                  max_threads=nelem)
-        new{threads, length(sz), typeof(result)}(result, sz, nelem, cld(nelem, threads))
+        _threads = if isnothing(threads)
+            optimal_threads(_dot_atomic_kernel!,
+                            result, pa, pa,
+                            nelem, sz;
+                            max_threads=nelem)
+        else
+            threads
+        end
+        new{length(sz), typeof(result)}(result, sz, nelem, Int32(_threads), cld(nelem, _threads))
     end
 end
 
@@ -150,21 +153,25 @@ struct Shared{THREADS, D, A} <: DotMethod
      nelem::Int32
     blocks::Int32
 
-    function Shared(a::ProjectedField, ::Type{T}=Float32) where {T}
+    function Shared(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
         nelem = Int32(prod(sz))
-        kernel  = @cuda launch=false _dot_shared_kernel!(
-            result, pa, pa, nelem, sz, Val(256)  # dummy Val — replaced below
-        )
-        threads = let config = launch_configuration(kernel.fun;
-                                   shmem = t -> t * sizeof(T))
-            # round down to nearest power of 2 — required for tree reduction
-            prev_pow2 = 2^floor(Int, log2(config.threads))
-            min(prev_pow2, nelem)
+        _threads = if isnothing(threads)
+                kernel  = @cuda launch=false _dot_shared_kernel!(
+                    result, pa, pa, nelem, sz, Val(256)  # dummy Val — replaced below
+                )
+                threads = let config = launch_configuration(kernel.fun;
+                                        shmem = t -> t * sizeof(T))
+                    # round down to nearest power of 2 — required for tree reduction
+                    prev_pow2 = 2^floor(Int, log2(config.threads))
+                    min(prev_pow2, nelem)
+            end
+        else
+            threads
         end
-        new{threads, length(sz), typeof(result)}(result, sz, nelem, cld(nelem, threads))
+        new{_threads, length(sz), typeof(result)}(result, sz, nelem, cld(nelem, _threads))
     end
 end
 
@@ -371,14 +378,15 @@ end
 Single-pass reduction using per-thread `CUDA.@atomic` accumulation into a
 scalar. Thread count `THREADS` is a compile-time constant from the type parameter.
 """
-function _dot(a::CuArray{T}, b::CuArray{T}, cache::Atomic{THREADS}) where {T, THREADS}
-    sz     = cache.sz
-    nelem  = cache.nelem
-    result = cache.result
-    blocks = cache.blocks
+function _dot(a::CuArray{T}, b::CuArray{T}, cache::Atomic) where {T}
+    sz      = cache.sz
+    nelem   = cache.nelem
+    result  = cache.result
+    threads = cache.threads
+    blocks  = cache.blocks
     CUDA.fill!(result, zero(T))
 
-    @cuda threads=THREADS blocks=blocks _dot_atomic_kernel!(
+    @cuda threads=threads blocks=blocks _dot_atomic_kernel!(
         result, a, b, nelem, sz
     )
 

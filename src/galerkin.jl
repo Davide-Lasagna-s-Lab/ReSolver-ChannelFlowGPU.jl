@@ -450,7 +450,8 @@ end
 GPU kernel: compute projection for each element of `a` on each thread using loops,
 which are statically unrolled.
 """
-function _project_loop_kernel!(a, modes, u, ws, sz, nelem, ::Val{N}, ::Val{Ny}) where {N, Ny}
+function _project_loop_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, ws::CuDeviceArray,
+                               sz::NTuple, nelem::Int32, ::Val{N}, ::Val{Ny}) where {N, Ny}
     idx = (blockIdx().x - 1i32)*blockDim().x + threadIdx().x
     idx > nelem && return nothing
 
@@ -479,7 +480,8 @@ GPU kernel: compute projection for each element of `a` on each thread using loop
 which are statically unrolled. The quadrature weights are assigned to static shared
 memory to try to optimise global memory reads.
 """
-function _project_shared_kernel!(a, modes, u, ws, sz, nelem, ::Val{N}, ::Val{Ny}) where {N, Ny}
+function _project_shared_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, ws::CuDeviceArray,
+                                 sz::NTuple, nelem::Int32, ::Val{N}, ::Val{Ny}) where {N, Ny}
     # load weights into shared memory so all threads in the block share it
     ws_shared = @cuStaticSharedMem(Float32, Ny)
     tid = threadIdx().x
@@ -516,7 +518,8 @@ GPU kernel: compute projection for each element of `a` using warp level primitiv
 The final result is accumulated using `CUDA.shfl_down_sync` to reduce the result in
 a single warp to single number.
 """
-function _project_warp_kernel!(a, modes, u, ws, sz, nelem, ::Val{N}, ::Val{Ny}) where {N, Ny}
+function _project_warp_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, ws::CuDeviceArray,
+                               sz::NTuple, nelem::Int32, ::Val{N}, ::Val{Ny}) where {N, Ny}
     # each warp handles one output element
     warp_id = (threadIdx().x - 1i32)÷32i32 + 1i32
     lane_id = (threadIdx().x - 1i32)%32i32 + 1i32
@@ -559,5 +562,9 @@ end
 # ------------- #
 # expand method #
 # ------------- #
+# TODO: this
+# TODO: benchmark residual
+# TODO: test FFT plans
+# TODO: test derivatives
 expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
         a::ProjectedField{G, M, <:CuArray}) where {N, G, M} = nothing
