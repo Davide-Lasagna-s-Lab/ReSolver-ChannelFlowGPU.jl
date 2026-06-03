@@ -27,9 +27,9 @@ function run_benchmarks()
     bd = CUDA.cu(b)
 
     # Construct methods once — no allocation cost in benchmark loop
-    twostage_m = TwoStage(size(a), NSEBase.fft_dims(g), T)
-    atomic_m   = Atomic(ad, T)
-    shared_m   = Shared(ad, T)
+    twostage_m = DotTwoStage(size(a), NSEBase.fft_dims(g), T)
+    atomic_m   = DotAtomic(ad, T)
+    shared_m   = DotShared(ad, T)
 
     methods      = [twostage_m, atomic_m, shared_m]
     method_names = ["TwoStage", "Atomic", "Shared"]
@@ -117,9 +117,9 @@ function run_benchmarks()
         ad_ = CUDA.cu(a_)
         bd_ = CUDA.cu(b_)
 
-        m_twostage = TwoStage(size(a_), NSEBase.fft_dims(g), T)
-        m_atomic   = Atomic(ad_, T)
-        m_shared   = Shared(ad_, T)
+        m_twostage = DotTwoStage(size(a_), NSEBase.fft_dims(g), T)
+        m_atomic   = DotAtomic(ad_, T)
+        m_shared   = DotShared(ad_, T)
 
         local_methods = [m_twostage, m_atomic, m_shared]
 

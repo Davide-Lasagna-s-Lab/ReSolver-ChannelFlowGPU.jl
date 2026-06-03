@@ -6,7 +6,7 @@
 abstract type DotMethod end
 
 """
-    TwoStage{A} <: DotMethod
+    DotTwoStage{A} <: DotMethod
 
 Two-stage dot product method for GPU-resident `ProjectedField` arrays.
 
@@ -24,7 +24,7 @@ avoids any allocation cost at the call site.
   of the same size and element type as the input fields.
 
 # Constructor
-    TwoStage(sz::NTuple{D, Int}, order, ::Type{T}=Float32)
+    DotTwoStage(sz::NTuple{D, Int}, order, ::Type{T}=Float32)
 
 - `sz`:    size of the underlying parent array
 - `order`: FFT dimension ordering — `order[1]` is the rfft dimension
@@ -32,14 +32,14 @@ avoids any allocation cost at the call site.
 
 # Example
 ```julia
-method = TwoStage(size(parent(a)), fft_dims(grid(a)), Float32)
+method = DotTwoStage(size(parent(a)), fft_dims(grid(a)), Float32)
 dot(a, b, method)
 ```
 """
-struct TwoStage{A} <: DotMethod
+struct DotTwoStage{A} <: DotMethod
     cache::NTuple{2, A}
 
-    function TwoStage(sz::NTuple{D, Int}, order::NTuple, ::Type{T}=Float32) where {D, T}
+    function DotTwoStage(sz::NTuple{D, Int}, order::NTuple, ::Type{T}=Float32) where {D, T}
         weight_vec   = CuArray{T}([i == 1 ? one(T) : T(2) for i in 1:sz[order[1]]])
         shape        = ntuple(d -> d == order[1] ? sz[order[1]] : 1, D)
         weights      = CUDA.zeros(T, sz...)
@@ -48,12 +48,12 @@ struct TwoStage{A} <: DotMethod
         new{typeof(weights)}((weights, intermediate))
     end
 end
-TwoStage(a::ProjectedField) = TwoStage(size(a), NSEBase.fft_dims(grid(a)), real(eltype(a)))
+DotTwoStage(a::ProjectedField) = DotTwoStage(size(a), NSEBase.fft_dims(grid(a)), real(eltype(a)))
 
 """
-    Atomic{THREADS, D, A} <: DotMethod
+    DotAtomic{THREADS, D, A} <: DotMethod
 
-Atomic accumulation dot product method for GPU-resident `ProjectedField` arrays.
+DotAtomic accumulation dot product method for GPU-resident `ProjectedField` arrays.
 
 Each thread computes one weighted elementwise product and accumulates its
 contribution into a single scalar result via `CUDA.@atomic`. The optimal thread
@@ -62,8 +62,8 @@ time and encoded as the type parameter `THREADS`, ensuring static dispatch with
 no runtime overhead per call.
 
 Best suited for small-to-medium problem sizes where atomic contention on the
-single accumulator is not a bottleneck. For large arrays the `Shared` or
-`TwoStage` methods are likely faster — use `initialise_dot!` to auto-tune.
+single accumulator is not a bottleneck. For large arrays the `DotShared` or
+`DotTwoStage` methods are likely faster — use `initialise_dot!` to auto-tune.
 
 # Fields
 - `result::A`: pre-allocated single-element `CuArray` accumulator.
@@ -72,7 +72,7 @@ single accumulator is not a bottleneck. For large arrays the `Shared` or
 - `blocks::Int32`: number of GPU blocks assigned for kernel
 
 # Constructor
-    Atomic(a::ProjectedField, ::Type{T}=Float32)
+    DotAtomic(a::ProjectedField, ::Type{T}=Float32)
 
 - `a`: a representative `ProjectedField` used to determine array size and
   query optimal thread count. Not mutated.
@@ -80,18 +80,18 @@ single accumulator is not a bottleneck. For large arrays the `Shared` or
 
 # Example
 ```julia
-method = Atomic(a, Float32)
+method = DotAtomic(a, Float32)
 dot(a, b, method)
 ```
 """
-struct Atomic{D, A} <: DotMethod
+struct DotAtomic{D, A} <: DotMethod
     result::A
         sz::NTuple{D, Int32}
      nelem::Int32
    threads::Int32
     blocks::Int32
 
-    function Atomic(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
+    function DotAtomic(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
@@ -109,14 +109,14 @@ struct Atomic{D, A} <: DotMethod
 end
 
 """
-    Shared{THREADS, D, A} <: DotMethod
+    DotShared{THREADS, D, A} <: DotMethod
 
-Shared memory tree-reduction dot product method for GPU-resident `ProjectedField`
+DotShared memory tree-reduction dot product method for GPU-resident `ProjectedField`
 arrays.
 
 Each thread block performs a local tree reduction into shared memory, then
 contributes a single atomic add to the global result — reducing atomic contention
-from `O(N)` to `O(N/THREADS)` compared to the `Atomic` method. The shared memory
+from `O(N)` to `O(N/THREADS)` compared to the `DotAtomic` method. The shared memory
 size is determined by `THREADS` which is encoded as a type parameter and must be
 a power of 2.
 
@@ -124,7 +124,7 @@ The optimal thread count is determined at construction time via
 `launch_configuration` with shared memory pressure accounted for, and rounded
 down to the nearest power of 2 as required by the tree reduction algorithm.
 
-Best suited for medium problem sizes. For very large arrays the `TwoStage` method
+Best suited for medium problem sizes. For very large arrays the `DotTwoStage` method
 may still win due to its optimised memory access pattern — use `initialise_dot!`
 to auto-tune.
 
@@ -135,7 +135,7 @@ to auto-tune.
 - `blocks::Int32`: number of GPU blocks assigned for kernel
 
 # Constructor
-    Shared(a::ProjectedField, ::Type{T}=Float32)
+    DotShared(a::ProjectedField, ::Type{T}=Float32)
 
 - `a`: a representative `ProjectedField` used to determine array size and
   query optimal thread count. Not mutated.
@@ -143,17 +143,17 @@ to auto-tune.
 
 # Example
 ```julia
-method = Shared(a, Float32)
+method = DotShared(a, Float32)
 dot(a, b, method)
 ```
 """
-struct Shared{THREADS, D, A} <: DotMethod
+struct DotShared{THREADS, D, A} <: DotMethod
     result::A
         sz::NTuple{D, Int32}
      nelem::Int32
     blocks::Int32
 
-    function Shared(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
+    function DotShared(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
@@ -216,9 +216,9 @@ function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
 
     # Construct all candidate methods
     candidates = DotMethod[
-        TwoStage(sz, NSEBase.fft_dims(grid(a)), real(T)),
-        Atomic(a, real(T)),
-        Shared(a, real(T)),
+        DotTwoStage(sz, NSEBase.fft_dims(grid(a)), real(T)),
+        DotAtomic(a, real(T)),
+        DotShared(a, real(T)),
     ]
 
     # Warmup all candidates — triggers compilation
@@ -323,8 +323,8 @@ initialise_dot!(a)
 s = dot(a, b)   # uses cached optimal method, returns Float32
 ```
 
-See also: [`initialise_dot!`](@ref), [`TwoStage`](@ref), [`Shared`](@ref),
-[`Atomic`](@ref)
+See also: [`initialise_dot!`](@ref), [`DotTwoStage`](@ref), [`DotShared`](@ref),
+[`DotAtomic`](@ref)
 """
 LinearAlgebra.dot(a::ProjectedField{G, M, A},
                   b::ProjectedField{G, M, A}) where {G<:AbstractGrid, M, A<:CuArray} =
@@ -343,15 +343,15 @@ constructing and caching a method is not warranted.
 
 # Arguments
 - `a`, `b`: `ProjectedField`s on the same grid with `CuArray` storage.
-- `method`: a pre-constructed `DotMethod` — one of `TwoStage`, `Shared`,
-  or `Atomic`.
+- `method`: a pre-constructed `DotMethod` — one of `DotTwoStage`, `DotShared`,
+  or `DotAtomic`.
 
 # Returns
 - A host-side scalar of the real element type `T`.
 
 # Example
 ```julia
-method = TwoStage(size(parent(a)), fft_dims(grid(a)), Float32)
+method = DotTwoStage(size(parent(a)), fft_dims(grid(a)), Float32)
 s = dot(a, b, method)
 ```
 """
@@ -361,24 +361,24 @@ LinearAlgebra.dot(a::ProjectedField{G, M, <:CuArray},
     _dot(parent(a), parent(b), method)
 
 """
-    _dot(a, b, cache::TwoStage) -> T
+    _dot(a, b, cache::DotTwoStage) -> T
 
 Two-stage weighted reduction: elementwise weighted product into `intermediate`,
 then `sum`. Stays entirely on device until the final scalar transfer.
 """
-function _dot(a::CuArray, b::CuArray, cache::TwoStage)
+function _dot(a::CuArray, b::CuArray, cache::DotTwoStage)
     weights, intermediate = cache.cache
  @. intermediate          = weights*real(dot(a, b))
     return sum(intermediate)/2
 end
 
 """
-    _dot(a::CuArray{T}, b::CuArray{T}, cache::Atomic{THREADS}) -> T
+    _dot(a::CuArray{T}, b::CuArray{T}, cache::DotAtomic{THREADS}) -> T
 
 Single-pass reduction using per-thread `CUDA.@atomic` accumulation into a
 scalar. Thread count `THREADS` is a compile-time constant from the type parameter.
 """
-function _dot(a::CuArray{T}, b::CuArray{T}, cache::Atomic) where {T}
+function _dot(a::CuArray{T}, b::CuArray{T}, cache::DotAtomic) where {T}
     sz      = cache.sz
     nelem   = cache.nelem
     result  = cache.result
@@ -394,12 +394,12 @@ function _dot(a::CuArray{T}, b::CuArray{T}, cache::Atomic) where {T}
 end
 
 """
-    _dot(a::CuArray{T}, b::CuArray{T}, cache::Shared{THREADS}) -> T
+    _dot(a::CuArray{T}, b::CuArray{T}, cache::DotShared{THREADS}) -> T
 
 Two-level reduction: shared memory tree reduction within each block, then one
 `CUDA.@atomic` per block into the scalar result. `THREADS` must be a power of 2.
 """
-function _dot(a::CuArray{T}, b::CuArray{T}, cache::Shared{THREADS}) where {T, THREADS}
+function _dot(a::CuArray{T}, b::CuArray{T}, cache::DotShared{THREADS}) where {T, THREADS}
     sz     = cache.sz
     nelem  = cache.nelem
     result = cache.result

@@ -15,7 +15,9 @@ __init__() = @assert CUDA.functional(true)
 using NSEBase,
       ReSolverChannelFlow
 
-export TwoStage, Atomic, Shared
+export DotTwoStage, DotAtomic, DotShared
+export ProjectBroadcast, ProjectLoop, ProjectShared
+export ExpandBroadcast, ExpandModal
 
 """
     optimal_threads(kernel!, args...; max_threads=nothing) -> Int
