@@ -1,9 +1,14 @@
 module ReSolverChannelFlowGPU
 
 using CUDA,
-      LinearAlgebra
+      LinearAlgebra,
+      Adapt
 
 using CUDA: i32
+
+# TODO: benchmark residual
+# TODO: test FFT plans
+# TODO: test derivatives
 
 __init__() = @assert CUDA.functional(true)
 
@@ -45,7 +50,6 @@ end
     end
 end
 
-using Adapt
 function Adapt.adapt_structure(to, g::ChannelGrid{S, T}) where {S, T}
     y = Adapt.adapt_structure(to, g.y)
     D₁ = Adapt.adapt_structure(to, g.D₁)

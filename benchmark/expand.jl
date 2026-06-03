@@ -17,7 +17,8 @@ const BENCHMARK_SIZES = [
     (33, 8, 65,  17, 5, 3),
     (65, 16, 129, 33, 8, 3),
 ]
-
+using Random
+Random.seed!(0)
 # ============================================================
 # Helper to construct fields for a given size
 # ============================================================
@@ -37,47 +38,44 @@ function make_fields(S, M, N)
     u = VectorField([FTField(g) for _ in 1:N]...)
 
     # Fill with random data
-    for n in 1:N
-        parent(u[n]) .= randn(ComplexF64, size(parent(u[n])))
-    end
+    a .= randn(ComplexF64, size(parent(a)))
 
-    return a, u
+    return u, a
 end
 
 # ============================================================
 # Construct all methods for a given field pair
 # ============================================================
-function make_methods(a, u)
+function make_methods(u, a)
     Dict(
-        "Broadcast" => ReSolverChannelFlowGPU.ProjectBroadcast(CUDA.cu(a)),
-        "Loop"      => ReSolverChannelFlowGPU.ProjectLoop(CUDA.cu(a), CUDA.cu(u)),
-        "Shared"    => ReSolverChannelFlowGPU.ProjectShared(CUDA.cu(a), CUDA.cu(u)),
-        # "Warp"      => ReSolverChannelFlowGPU.ProjectWarp(),
+        "Broadcast" => ReSolverChannelFlowGPU.ExpandBroadcast(),
+        "Modal 1"   => ReSolverChannelFlowGPU.ExpandModal(CUDA.cu(u), CUDA.cu(a), false),
+        "Modal 2"   => ReSolverChannelFlowGPU.ExpandModal(CUDA.cu(u), CUDA.cu(a), true),
     )
 end
 
 # ============================================================
 # Correctness check
 # ============================================================
-function check_correctness(a, u, methods)
+function check_correctness(u, a, methods)
     println("  Correctness check:")
 
     # Compute reference with CPU method
-    ref_a  = similar(a)
-    project!(ref_a, u)
-    ref = copy(parent(ref_a))
+    ref_u  = similar(u)
+    expand!(ref_u, a)
+    ref = copy.(parent(ref_u))
 
     # move data to device
-    ad = CUDA.cu(a); ud = CUDA.cu(u)
+    ud = CUDA.cu(u); ad = CUDA.cu(a)
 
     # compute projection using methods
     names  = collect(keys(methods))
     for name in names
-        out = similar(ad)
-        project!(out, ud, methods[name])
+        out = similar(ud)
+        expand!(out, ad, methods[name])
         CUDA.synchronize()
-        result = Array(parent(out))
-        diff   = maximum(abs, result .- ref)
+        result = ntuple(n -> Array(parent(out[n])), length(u))
+        diff = max(ntuple(n -> maximum(abs, result[n] .- ref[n]), length(u))...)
         diff < 1f-4 ? printstyled("    ✓", color=:green) : printstyled("    ✗", color=:red)
         println(" $name vs CPU: max diff = $diff")
     end
@@ -86,8 +84,8 @@ end
 # ============================================================
 # Detailed benchmark for a single size
 # ============================================================
-function benchmark_single(a, u, methods, S, N, T)
-    println("\n  Detailed benchmark (S=$S, N=$N, T=$T):")
+function benchmark_single(u, a, methods, S, N)
+    println("\n  Detailed benchmark (S=$S, M=$(size(a, 1)), N=$N, T=Float32):")
     println("  ", rpad("Method", 16),
                   rpad("Device (μs)", 14),
                   rpad("Host (μs)", 14),
@@ -96,32 +94,32 @@ function benchmark_single(a, u, methods, S, N, T)
     println("  ", "-"^64)
 
     # benchmark CPU method
-    project!(a, u) # warm-up
-    ts = @belapsed project!($a, $u) seconds=2
+    expand!(u, a) # warm-up
+    ts = @belapsed expand!($u, $a) seconds=2
 
     # move data to device
-    ad = CUDA.cu(a); ud = CUDA.cu(u)
+    ud = CUDA.cu(u); ad = CUDA.cu(a)
 
     for (name, method) in methods
         # Warmup
-        project!(ad, ud, method)
+        expand!(ud, ad, method)
         CUDA.synchronize()
 
         # Device-side time — pure GPU execution
         t_device = minimum(1:20) do _
-            CUDA.@elapsed project!(ad, ud, method)
+            CUDA.@elapsed expand!(ud, ad, method)
         end
 
         # Host-side time — full round trip including launch overhead
         t_host = @belapsed begin
-            CUDA.@sync project!($ad, $ud, $method)
+            CUDA.@sync expand!($ud, $ad, $method)
         end seconds=2
 
         # Allocation check
-        project!(ad, ud, method)  # ensure compiled
+        expand!(ud, ad, method)  # ensure compiled
         CUDA.synchronize()
         allocs = @allocated begin
-            project!(ad, ud, method)
+            expand!(ud, ad, method)
             CUDA.synchronize()
         end
 
@@ -136,16 +134,16 @@ end
 # ============================================================
 # Scaling sweep
 # ============================================================
-function benchmark_scaling(sizes, T)
+function benchmark_scaling(sizes)
     println("\n\nScaling sweep (device time, μs):")
 
     # Collect all method names from first size
     S0, M0, N0   = first(sizes)[1:4], first(sizes)[5], first(sizes)[6]
-    a0, u0       = make_fields(S0, M0, N0)
-    method_names = collect(keys(make_methods(a0, u0)))
+    u0, a0       = make_fields(S0, M0, N0)
+    method_names = collect(keys(make_methods(u0, a0)))
 
     # Header
-    header = rpad("(S..., N)", 30)
+    header = rpad("(S..., M, N)", 30)
     for name in method_names
         header *= rpad(name * " (μs)", 16)
     end
@@ -159,31 +157,31 @@ function benchmark_scaling(sizes, T)
         M = config[5]
         N = config[6]
 
-        a, u    = make_fields(S, M, N)
-        ad, ud  = CUDA.cu(a), CUDA.cu(u)
-        methods = make_methods(ad, ud)
+        u, a    = make_fields(S, M, N)
+        ud, ad  = CUDA.cu(u), CUDA.cu(a)
+        methods = make_methods(ud, ad)
 
         # Warmup all methods
-        project!(a, u)
+        expand!(u, a)
         for method in values(methods)
-            project!(ad, ud, method)
+            expand!(ud, ad, method)
         end
         CUDA.synchronize()
 
         # Time each method
-        ts = @belapsed project!($a, $u) seconds=2
+        ts = @belapsed expand!($u, $a) seconds=2
         times = map(method_names) do name
             minimum(1:20) do _
-                CUDA.@elapsed project!(ad, ud, methods[name])
+                CUDA.@elapsed expand!(ud, ad, methods[name])
             end
         end
 
         # Effective bandwidth for fastest method:
         # reads N FTFields + modes, writes one ProjectedField
         # each element is Complex{T} = 2*sizeof(T) bytes
-        bytes_read    = N * prod(S) * sizeof(Complex{T})   # u
-        bytes_read   += N * prod(S) * sizeof(Complex{T})   # modes
-        bytes_written = prod(size(parent(a))) * sizeof(Complex{T})
+        bytes_read    = N * prod(S) * sizeof(Complex{Float32})   # u
+        bytes_read   += N * prod(S) * sizeof(Complex{Float32})   # modes
+        bytes_written = prod(size(parent(a))) * sizeof(Complex{Float32})
         total_bytes   = bytes_read + bytes_written
         best_bw       = total_bytes / minimum(times) / 1e9
 
@@ -200,7 +198,7 @@ end
 # ============================================================
 # Main entry point
 # ============================================================
-function run_project_benchmarks()
+function run_expand_benchmarks()
     println("="^70)
     println("ProjectedField projection benchmark")
     println("="^70)
@@ -209,14 +207,14 @@ function run_project_benchmarks()
     S_ref, M_ref, N_ref = (33, 16, 65, 17), 5, 3
     println("\nReference size: S=$S_ref, M=$M_ref, N=$N_ref")
 
-    a_ref, u_ref = make_fields(S_ref, M_ref, N_ref)
-    methods_ref  = make_methods(a_ref, u_ref)
+    u_ref, a_ref = make_fields(S_ref, M_ref, N_ref)
+    methods_ref  = make_methods(u_ref, a_ref)
 
-    check_correctness(a_ref, u_ref, methods_ref)
-    benchmark_single(a_ref, u_ref, methods_ref, S_ref, N_ref, Float32)
+    check_correctness(u_ref, a_ref, methods_ref)
+    benchmark_single(u_ref, a_ref, methods_ref, S_ref, N_ref)
 
     # ── scaling sweep ─────────────────────────────────────────────────── #
-    benchmark_scaling(BENCHMARK_SIZES, Float32)
+    benchmark_scaling(BENCHMARK_SIZES)
 end
 
-run_project_benchmarks()
+run_expand_benchmarks()

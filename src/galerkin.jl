@@ -30,7 +30,7 @@ for them being used on the host-side function during the broadcasting operation.
 # Example
 ```julia
 method = ProjectBroadcast(a)
-project!(a, b, method)
+project!(a, u, method)
 ```
 """
 struct ProjectBroadcast{T} <: ProjectMethod
@@ -70,7 +70,7 @@ input types.
 # Example
 ```julia
 method = ProjectLoop(a, u)
-project!(a, b, method)
+project!(a, u, method)
 ```
 """
 struct ProjectLoop{D} <: ProjectMethod
@@ -169,7 +169,7 @@ Return the `ProjectMethod` associated with the concrete type of `a` and `u`,
 auto-tuning if these types have not been seen before. Results are cached in
 `PROJECT_METHODS` keyed on `(typeof(a), typeof(u))`.
 
-    project_method(a) -> cached_method or autotune_project(a)
+    project_method(a, u) -> cached_method or autotune_project(a, u)
 """
 function project_method(a::ProjectedField{G, M, <:CuArray},
                         u::VectorField{N, <:FTField{G, <:CuArray}}) where {G, M, N}
@@ -189,7 +189,7 @@ device-side execution time, taking the minimum over 5 trials to reduce noise.
 
 Logs the winner and all trial times via `@info`.
 
-    autotune_project(a) -> best::ProjectMethod
+    autotune_project(a, u) -> best::ProjectMethod
 """
 function autotune_project(a, u)
     # Construct all candidate methods
@@ -213,7 +213,7 @@ function autotune_project(a, u)
     end
 
     best = candidates[argmin(times)]
-    @info "Auto-tuned dot product" typeof(a) best=typeof(best) times_ns=times
+    @info "Auto-tuned galerkin projection" typeof(a) typeof(u) best=typeof(best) times_ns=times
     return best
 end
 
@@ -221,7 +221,7 @@ end
     initialise_project!(a::ProjectedField, u::VectorField)
 
 Eagerly auto-tune and cache the optimal `ProjectMethod` for the concrete types of
-`a` and `u`. After this call, all `project!(a, b)` invocations for fields of the same
+`a` and `u`. After this call, all `project!(a, u)` invocations for fields of the same
 type will use the cached optimal method with no auto-tuning overhead.
 
 Should be called once per field type during program initialisation, before
@@ -262,7 +262,7 @@ reset_project_cache!()     # clear all cached methods
 reset_project_cache!(a, u) # clear only the method cached for (typeof(a), typeof(u))
 ```
 
-See also: [`initialise_dot!`](@ref)
+See also: [`initialise_project!`](@ref)
 """
 reset_project_cache!() = empty!(PROJECT_METHODS)
 reset_project_cache!(::P, ::V) where {P<:ProjectedField, V<:VectorField} = delete!(PROJECT_METHODS, (P, V))
@@ -279,7 +279,7 @@ Compute the Galerkin projection of the GPU-resident `VectorField` onto a set of
 orthonormal modes stored in the provided `ProjectedField`, using auto-tuned optimal
 method for their concrete type.
 
-The method used is determined by `project_method(a)`, which auto-tunes on the first
+The method used is determined by `project_method(a, u)`, which auto-tunes on the first
 call and returns the cached result on all subsequent calls. Call
 `initialise_project!(a, u)` before entering performance-critical loops to ensure the
 auto-tuning cost is paid upfront.
@@ -306,7 +306,7 @@ See also: [`initialise_project!`](@ref), [`ProjectBroadcast`](@ref),
 """
 NSEBase.project!(a::ProjectedField{G, M, <:CuArray},
                  u::VectorField{N, <:FTField{G, <:CuArray}}) where {G<:AbstractGrid, M, N} =
-    NSEBase.project!(a, u, project_method(a, y))
+    NSEBase.project!(a, u, project_method(a, u))
 
 """
     project!(a::ProjectedField{G, M, <:CuArray},
@@ -332,7 +332,7 @@ constructing and caching a method is not warranted.
 # Example
 ```julia
 method = ProjectLoop(a, u)
-project!(a, b, method)
+project!(a, u, method)
 ```
 """
 NSEBase.project!(a::ProjectedField{G, M, <:CuArray},
@@ -562,9 +562,396 @@ end
 # ------------- #
 # expand method #
 # ------------- #
-# TODO: this
-# TODO: benchmark residual
-# TODO: test FFT plans
-# TODO: test derivatives
-expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
-        a::ProjectedField{G, M, <:CuArray}) where {N, G, M} = nothing
+abstract type ExpandMethod end
+
+"""
+    ExpandBroadcast <: ExpandMethod
+
+Galerkin expansion method for GPU-resident `ProjectedField` and `VectorField`
+arrays using higher-order array abstractions provided by CUDA.jl.
+
+Computes the Galerkin expansion of a projected field using the stored set of
+orthonormal modes by accumulating the linear sum for each wall-normal location
+and mode number individually and for every frequency in parallel.
+
+# Example
+```julia
+method = ExpandBroadcast()
+expand!(u, a, method)
+```
+"""
+struct ExpandBroadcast <: ExpandMethod end
+
+"""
+    ExpandModal{M, VECTOR} <: ExpandMethod
+
+Galerkin expansion method for GPU-resident `ProjectedField` and `VectorField`
+arrays using GPU native kernels to compute the linear sums in parallel.
+
+Computes the Galerkin expansion of a projected field using the stored set of
+orthonormal modes by accumulating the linear sum for each mode number individually
+and for every wall-normal location and frequency in parallel. The option
+`over_vector` allows the option to parallelise over the vector field component
+as well as the individual points making up the fields of `u`. If it is set to
+`false` then the vector field components are looped over in serial by every
+thread instead.
+
+# Fields
+- `sz::NTuple{D, Int32}`: size of `VectorField` arrays
+- `nelem::Int32`: total number of elements of each `VectorField` component arrays
+                  (`nelem=prod(sz)`)
+- `nelem_tot::Int32`: total number of elements in the `VectorField` 
+- `threads`::Int32: number of GPU threads per block
+- `blocks::Int32`: number of GPU blocks assigned for kernel
+
+# Constructor
+    ExpandModal(u::VectorField,
+                a::ProjectedField,
+                over_vector::Bool=false)
+
+0 `u`: vector field the expansion is assigned to
+- `a`: projected field the expansion is computed from
+
+# Example
+```julia
+method = ExpandModal(a)
+expand!(u, a, method)
+```
+"""
+struct ExpandModal{M, VECTOR, D} <: ExpandMethod
+        sz::NTuple{D, Int32}
+     nelem::Int32
+ nelem_tot::Int32
+   threads::Int32
+    blocks::Int32
+
+    function ExpandModal(u::VectorField{N},
+                         a::ProjectedField,
+               over_vector::Bool=false;
+                   threads::Union{Nothing, Int}=nothing) where {N}
+        M = size(a, 1)
+        sz = Int32.(size(u[1]))
+        nelem = Int32(prod(sz))
+        nelem_tot = Int32(N*prod(sz))
+        _threads = if isnothing(threads)
+            if over_vector
+                optimal_threads(_expand_modal_1_kernel!,
+                                u, parent(a), modes(a),
+                                sz, nelem, nelem_tot,
+                                Val(Int32(N)), Val(Int32(M));
+                                max_threads=nelem)
+            else
+                optimal_threads(_expand_modal_2_kernel!,
+                                u, parent(a), modes(a),
+                                sz, nelem,
+                                Val(Int32(N)), Val(Int32(M));
+                                max_threads=nelem)
+            end
+        else
+            threads
+        end
+        blocks = cld(over_vector ? nelem_tot : nelem, _threads)
+        new{M, over_vector, length(sz)}(sz, nelem, nelem_tot, Int32(_threads), Int32(blocks))
+    end
+end
+
+# --------------------------------------- #
+# auto-tuning for optimal method dispatch #
+# --------------------------------------- #
+const EXPAND_METHODS = Dict{Tuple{Type, Type}, ExpandMethod}()
+
+"""
+    expand_method(u::VectorField{N, <:FTField{G, <:CuArray}},
+                  a::ProjectedField{G, M, <:CuArray}) -> ExpandMethod
+
+Return the `ExpandMethod` associated with the concrete type of `u` and `a`,
+auto-tuning if these types have not been seen before. Results are cached in
+`EXPAND_METHODS` keyed on `(typeof(u), typeof(a))`.
+
+    expand_method(u, a) -> cached_method or autotune_expand(u, a)
+"""
+function expand_method(u::VectorField{N, <:FTField{G, <:CuArray}},
+                       a::ProjectedField{G, M, <:CuArray}) where {G, M, N}
+    get!(EXPAND_METHODS, (typeof(u), typeof(a))) do
+        autotune_expand(u, a)
+    end
+end
+
+"""
+    autotune_expand(u::VectorField{N, <:FTField{G, <:CuArray}},
+                    a::ProjectedField{G, M, <:CuArray{T}}) -> ExpandMethod
+
+Benchmark all available `ExpandMethod` implementations against a dummy field of
+the same types as `u` and `a` and return the fastest. Each candidate is warmed up
+once to trigger compilation before timing. Timing uses `CUDA.@elapsed` to measure
+device-side execution time, taking the minimum over 5 trials to reduce noise.
+
+Logs the winner and all trial times via `@info`.
+
+    autotune_expand(u, a) -> best::ExpandMethod
+"""
+function autotune_expand(u, a)
+    # Construct all candidate methods
+    candidates = ExpandMethod[
+        ExpandBroadcast(u, a),
+        ExpandModal(u, a, false),
+        ExpandModal(u, a, true),
+    ]
+
+    # Warmup all candidates — triggers compilation
+    for method in candidates
+        expand!(u, a, method)
+    end
+    CUDA.synchronize()
+
+    # Time each candidate
+    times = map(candidates) do method
+        minimum(1:5) do _
+            CUDA.@elapsed expand!(u, a, method)
+        end
+    end
+
+    best = candidates[argmin(times)]
+    @info "Auto-tuned galerkin expansion" typeof(u) typeof(a) best=typeof(best) times_ns=times
+    return best
+end
+
+"""
+    initialise_expand!(u::VectorField, a::ProjectedField)
+
+Eagerly auto-tune and cache the optimal `ExpandMethod` for the concrete types of
+`u` and `a`. After this call, all `expand!(u, a)` invocations for fields of the same
+type will use the cached optimal method with no auto-tuning overhead.
+
+Should be called once per field type during program initialisation, before
+entering any performance-critical loops.
+
+# Example
+```julia
+u = VectorField(...)
+a = ProjectedField(...)
+initialise_expand!(u, a)   # benchmarks all methods, caches the winner
+
+# all subsequent calls use the cached optimal method
+for i in 1:nsteps
+    expand!(similar(u), a)
+end
+```
+
+See also: [`reset_expand_cache!`](@ref)
+"""
+function initialise_expand!(u::VectorField, a::ProjectedField)
+    project_method(u, a)
+    return nothing
+end
+
+"""
+    reset_expand_cache!()
+    reset_expand_cache!(u::VectorField, a::ProjectedField)
+
+Clear the auto-tune cache for all field types, or for the specific types of `u`
+and `a`. The next `expand!` call after resetting will trigger auto-tuning again.
+
+Useful when benchmarking different methods explicitly, or after moving to a
+different GPU with different performance characteristics.
+
+# Example
+```julia
+reset_expand_cache!()     # clear all cached methods
+reset_expand_cache!(a, u) # clear only the method cached for (typeof(u), typeof(a))
+```
+
+See also: [`initialise_expand!`](@ref)
+"""
+reset_expand_cache!() = empty!(EXPAND_METHODS)
+reset_expand_cache!(::V, ::P) where {V<:VectorField, P<:ProjectedField} = delete!(EXPAND_METHODS, (V, P))
+
+
+# --------------------------- #
+# top-level expansion methods #
+# --------------------------- #
+"""
+    expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
+            a::ProjectedField{G, M, <:CuArray}) -> u
+
+Compute the Galerkin expansion of the GPU-resident `ProjectedField` storing the
+result in the provided `VectorField`, using auto-tuned optimal method for their
+concrete type.
+
+The method used is determined by `expand_method(u, a)`, which auto-tunes on the first
+call and returns the cached result on all subsequent calls. Call
+`initialise_expand!(u, a)` before entering performance-critical loops to ensure the
+auto-tuning cost is paid upfront.
+
+# Arguments
+- `a`: `ProjectedField` on the grid `G` and `CuArray` storage.
+- `u`: `VectorField` of `FTField` on the same grid `G` and `CuArray` storage.
+
+# Returns
+- `u` with each element assigned the weighted sum of the orthonormal modes stored
+      in `modes(a)`
+
+# Example
+```julia
+initialise_expand!(u, a)
+expand!(u, a)   # uses cached optimal method, returns `u`
+```
+
+```julia
+expand!(u, a)   # auto-tune optimal method and cache for later use, returns `u`
+```
+
+See also: [`initialise_expand!`](@ref), [`ExpandBroadcast`](@ref),
+[`ExpandModal`](@ref)
+"""
+NSEBase.expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
+                a::ProjectedField{G, M, <:CuArray}) where {N, G<:AbstractGrid, M} =
+    NSEBase.expand!(u, a, expand_method(u, a))
+
+"""
+    expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
+            a::ProjectedField{G, M, <:CuArray},
+            method::ExpandMethod) -> u
+
+Compute the Galerkin expansion of the GPU-resident `ProjectedField` storing the
+result in the provided `VectorField`. Bypasses the auto-tune cache entirely.
+
+Useful for benchmarking specific methods or for one-off computations where
+constructing and caching a method is not warranted.
+
+# Arguments
+- `a`: `ProjectedField` on the grid `G` and `CuArray` storage.
+- `u`: `VectorField` of `FTField` on the same grid `G` and `CuArray` storage.
+- `method`: a pre-constructed `ExpandMethod` — either `ExpandBroadcast`, or
+            `ExpandModal`.
+
+# Returns
+- `u` with each element assigned the weighted sum of the orthonormal modes stored
+      in `modes(a)`
+
+# Example
+```julia
+method = ExpandModal(u, a)
+expand!(u, a, method)
+```
+"""
+NSEBase.expand!(u::VectorField{N, <:FTField{G, <:CuArray}},
+                a::ProjectedField{G, M, <:CuArray},
+           method::ExpandMethod) where {N, G, M} = _expand!(u, a, method)
+
+"""
+    _expand!(u::VectorField,
+             a::ProjectedField,
+             cache::ExpandBroadcast) -> u
+
+Compute Galerkin expand of `a` into the provided field `u` using higher-order
+array abstractions provided by CUDA.jl.
+"""
+function _expand!(u::VectorField{N}, a::ProjectedField{<:ChannelGrid{S, T}}, ::ExpandBroadcast) where {N, S, T}
+    pa = parent(a)
+    for n in 1:N
+        pu_n = parent(u[n])
+        modes_n = modes(a)[n]
+        CUDA.fill!(pu_n, zero(T))
+        for m in axes(a, 1)
+            a_m = view(pa, m, :, :, :)
+            for ny in 1:S[2]
+                pu_n_ny = view(pu_n, ny, :, :, :)
+                modes_n_ny_m = view(modes_n, ny, m, :, :, :)
+                pu_n_ny .+= a_m.*modes_n_ny_m
+            end
+        end
+    end
+
+    return u
+end
+
+"""
+    _expand!(u::VectorField,
+             a::ProjectedField,
+             cache::ExpandModal) -> u
+
+Compute Galerkin expansion of `a` into the provided field `u` using
+[_expand_modal_1_kernel!](@ref).
+
+Using `over_vector` upon the construction of the [ExpandModal](@ref) cache,
+the user can choose to use either of the GPU kernels [_expand_modal_1_kernel](@ref)
+or [_expand_modal_2_kernel](@ref). With `over_vector=true` the vector field 
+component is included in the parallel execution of the kernel, and
+`over_vector=false` means that the kernel loops the vector field components.
+"""
+function _expand!(u::VectorField{N},
+                  a::ProjectedField{<:AbstractGrid{T}},
+              cache::ExpandModal{M, true}) where {N, T, M}
+    sz        = cache.sz
+    nelem     = cache.nelem
+    nelem_tot = cache.nelem_tot
+    threads   = cache.threads
+    blocks    = cache.blocks
+
+    @cuda threads=threads blocks=blocks _expand_modal_1_kernel!(
+        u, parent(a), modes(a), sz, nelem, nelem_tot, Val(N), Val(M)
+    )
+end
+function _expand!(u::VectorField{N},
+                  a::ProjectedField{<:AbstractGrid{T}},
+              cache::ExpandModal{M, false}) where {N, T, M}
+    sz        = cache.sz
+    nelem     = cache.nelem
+    threads   = cache.threads
+    blocks    = cache.blocks
+
+    @cuda threads=threads blocks=blocks _expand_modal_2_kernel!(
+        u, parent(a), modes(a), sz, nelem, Val(N), Val(M)
+    )
+end
+
+# ----------------- #
+# expansion kernels #
+# ----------------- #
+"""
+    _expand_modal_1_kernel!(a, modes, u, ws, sz, nelem, nelem_tot, ::Val{N}, ::Val{Ny})
+
+GPU kernel: compute the expansion of the coefficients `a` into a vectorfield `u`,
+parallelising over the vector field components `N` in addition to the individual
+field elements of `u`.
+"""
+function _expand_modal_1_kernel!(u, a, modes, sz, nelem, nelem_tot, ::Val{N}, ::Val{M}) where {N, M}
+    idx = (blockIdx().x - 1i32)*blockDim().x + threadIdx().x
+    idx > nelem_tot && return nothing
+
+    n   = (idx - 1i32)÷nelem + 1i32
+    rem = (idx - 1i32)%nelem + 1i32
+    I = _linear_to_cart(rem, sz)
+
+    acc = zero(eltype(a))
+    for m in 1:M
+        @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][I[1], m, I[2], I[3], I[4]]
+    end
+    @inbounds u[n][I] = acc
+
+    return nothing
+end
+
+"""
+    _expand_modal_2_kernel!(a, modes, u, ws, sz, nelem, ::Val{N}, ::Val{Ny})
+
+GPU kernel: compute the expansion of the coefficients `a` into a vectorfield `u`,
+treating each vector field component of `u` serially on each thread.
+"""
+function _expand_modal_2_kernel!(u, a, modes, sz, nelem, ::Val{N}, ::Val{M}) where {N, M}
+    idx = (blockIdx().x - 1i32)*blockDim().x + threadIdx().x
+    idx > nelem && return nothing
+
+    I = _linear_to_cart(idx, sz)
+
+    for n in 1:N
+        acc = zero(eltype(a))
+        for m in 1:M
+            @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][I[1], m, I[2], I[3], I[4]]
+        end
+        @inbounds u[n][I] = acc
+    end
+
+    return nothing
+end
