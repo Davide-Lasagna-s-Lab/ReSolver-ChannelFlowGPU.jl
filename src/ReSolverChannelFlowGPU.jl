@@ -7,7 +7,6 @@ using CUDA,
 using CUDA: i32
 
 # TODO: benchmark residual
-# TODO: test FFT plans
 # TODO: test derivatives
 
 __init__() = @assert CUDA.functional(true)
@@ -15,6 +14,7 @@ __init__() = @assert CUDA.functional(true)
 using NSEBase,
       ReSolverChannelFlow
 
+export CuFFTPlans
 export DotTwoStage, DotAtomic, DotShared
 export ProjectBroadcast, ProjectLoop, ProjectShared
 export ExpandBroadcast, ExpandModal

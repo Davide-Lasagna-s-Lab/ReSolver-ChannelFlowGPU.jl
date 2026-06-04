@@ -1,0 +1,5 @@
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+NSEBase = "9778a910-ce4d-423e-92be-12991f0cf10c"
+ReSolverChannelFlowGPU = "cbbec004-2816-4a06-900b-d51f11be72b6"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

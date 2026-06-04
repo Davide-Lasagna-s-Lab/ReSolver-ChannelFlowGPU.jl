@@ -14,37 +14,33 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
                     nthreads::Union{Nothing, Int}=nothing) where {D, H, T}
         all(1 ≤ d ≤ D for d in order) || throw(ArgumentError("order indices must be in 1:$D, got $order"))
         allunique(order)              || throw(ArgumentError("order indices must be unique, got $order"))
-        padded_size !== nothing && !dealias &&
-            throw(ArgumentError("cannot set padded_size with dealias=false"))
 
-        grid_size = if padded_size !== nothing
+        grid_size = if !isnothing(padded_size)
             length(padded_size) == D ||
                 throw(ArgumentError("padded_size must have $D elements, got $(length(padded_size))"))
             all(padded_size[d] >= size[d] for d in order) ||
                 throw(ArgumentError("padded_size must be ≥ size along each transformed dimension"))
             padded_size
-        elseif dealias
-            get_padded_size(size, order)
         else
-            size
+            NSEBase.get_padded_size(size, order)
         end
 
         spectral_array   = CUDA.zeros(Complex{T}, NSEBase._get_transform_size(grid_size, order[1]))
         physical_array   = CUDA.zeros(T, grid_size)
-        norm             = T(1 / prod(grid_size[i] for i in order))
+        norm             = T(1/prod(grid_size[i] for i in order))
 
         _nthreads = if isnothing(nthreads)
             # Use a representative problem size — the largest block this plan will transfer
             dummy_dest  = spectral_array
             dummy_src   = CUDA.zeros(Complex{T}, NSEBase._get_transform_size(size, order[1]))
-            dest_starts = ntuple(k -> 0, Val(ndims(dummy_src)))
-            dest_sizes  = ntuple(k -> size(dummy_src, k), Val(ndims(dummy_src)))
-            src_offsets = ntuple(k -> 0, Val(ndims(dummy_drc)))
+            dest_starts = Int32.(ntuple(k -> 0, Val(ndims(dummy_src))))
+            dest_sizes  = Int32.(ntuple(k -> Base.size(dummy_src, k), Val(ndims(dummy_src))))
+            src_offsets = Int32.(ntuple(k -> 0, Val(ndims(dummy_src))))
             optimal_threads(_loopblk_kernel!,
                             dummy_dest, dummy_src,
                             dest_starts, dest_sizes, src_offsets,
                             Val(false),
-                            max_threads=prod(dest_size))
+                            max_threads=prod(dest_sizes))
         else
             nthreads
         end
@@ -109,13 +105,19 @@ end
 #--------------------------- #
 # dealiasing utility methods #
 #--------------------------- #
+NSEBase._apply_mask!(cache::CuArray{T}) where {T} = (cache .= zero(T); return cache)
+
+NSEBase._copy_to_padded!(cache, u, order, threads)   = NSEBase._transfer_padded!(cache, u, order, Val(false), threads)
+NSEBase._copy_from_padded!(u, cache, order, threads) = NSEBase._transfer_padded!(u, cache, order, Val(false), threads)
+NSEBase._add_from_padded!(u, cache, order, threads)  = NSEBase._transfer_padded!(u, cache, order, Val(true),  threads)
+
 function NSEBase._transfer_padded!(dest, src, ord::NTuple{1, Int}, vadd::Val, threads)
     # rfft dim only: compact array is a prefix of the padded array, so the same
     # index block (1..size(compact,i) in every dim) is valid in both.
     compact = size(dest, ord[1]) <= size(src, ord[1]) ? dest : src
     vd  = Val(ndims(dest))
     blk = ntuple(i -> 1:size(compact, i), vd)
-    _loopblk!(dest, blk, src, blk, vadd, threads)
+    NSEBase._loopblk!(dest, blk, src, blk, vadd, threads)
     return dest
 end
 
@@ -129,14 +131,14 @@ function NSEBase._transfer_padded!(dest, src, ord::NTuple{2, Int}, vadd::Val, th
 
     # Positive block: same compact-sized range in both arrays.
     blk = ntuple(i -> i == d ? (1:npos) : (1:size(compact, i)), vd)
-    _loopblk!(dest, blk, src, blk, vadd, threads)
+    NSEBase._loopblk!(dest, blk, src, blk, vadd, threads)
 
     # Negative block: indices differ between compact and padded arrays.
     if nneg > 0
         blk_co = ntuple(i -> i == d ? (npos+1:size(compact, d))                : (1:size(compact, i)), vd)
         blk_pa = ntuple(i -> i == d ? (size(padded, d)-nneg+1:size(padded, d)) : (1:size(compact, i)), vd)
-        dest === compact ? _loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
-                           _loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
+        dest === compact ? NSEBase._loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
+                           NSEBase._loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
     end
     return dest
 end
@@ -158,18 +160,14 @@ function NSEBase._transfer_padded!(dest, src, ord::NTuple{3, Int}, vadd::Val, th
             isempty(rco3) && continue
             blk_co = ntuple(i -> i == d2 ? rco2 : i == d3 ? rco3 : (1:size(compact, i)), vd)
             blk_pa = ntuple(i -> i == d2 ? rpa2 : i == d3 ? rpa3 : (1:size(compact, i)), vd)
-            dest === compact ? _loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
-                               _loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
+            dest === compact ? NSEBase._loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
+                               NSEBase._loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
         end
     end
     return dest
 end
 
 NSEBase._transfer_padded!(_, _, ord::NTuple, _, _) = throw(NSEBase.NotImplementedError(ord))
-
-_copy_to_padded!(cache, u, order, threads) = _transfer_padded!(cache, u, order, Val(false), threads)
-_copy_from_padded!(u, cache, order, threads) = _transfer_padded!(u, cache, order, Val(false), threads)
-_add_from_padded!(u, cache, order, threads) = _transfer_padded!(u, cache, order, Val(true), threads)
 
 """
 Launch `_loopblk_kernel!` for a single contiguous block.
@@ -222,11 +220,11 @@ No heap allocation: all index arithmetic is register-based.
     for d in 1:D
         if d < D
             push!(decomp.args, quote
-                $(Symbol(:loc_, d)) = rem_idx % dest_sizes[$d]
+                $(Symbol(:loc_, d)) = rem_idx % dest_sizes[$d] + 1i32
                 rem_idx = rem_idx ÷ dest_sizes[$d]
             end)
         else
-            push!(decomp.args, :($(Symbol(:loc_, d)) = rem_idx))
+            push!(decomp.args, :($(Symbol(:loc_, d)) = rem_idx + 1i32))
         end
     end
 
