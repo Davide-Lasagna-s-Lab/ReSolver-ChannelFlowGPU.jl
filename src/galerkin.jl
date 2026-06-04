@@ -483,7 +483,7 @@ memory to try to optimise global memory reads.
 function _project_shared_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, ws::CuDeviceArray,
                                  sz::NTuple, nelem::Int32, ::Val{N}, ::Val{Ny}) where {N, Ny}
     # load weights into shared memory so all threads in the block share it
-    ws_shared = @cuStaticSharedMem(Float32, Ny)
+    ws_shared = CuStaticSharedArray(Float32, Ny)
     tid = threadIdx().x
     if tid ≤ Ny
         @inbounds ws_shared[tid] = ws[tid]

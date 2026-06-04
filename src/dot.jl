@@ -445,7 +445,7 @@ GPU kernel: shared memory tree reduction within each block followed by a single
 thread count. Shared memory is statically allocated as `THREADS` × `sizeof(T)`.
 """
 function _dot_shared_kernel!(result, a::CuDeviceArray, b::CuDeviceArray, nelem::Int32, sz::NTuple, ::Val{THREADS}) where {THREADS}
-    shared = @cuStaticSharedMem(Float32, THREADS)
+    shared = CuStaticSharedArray(Float32, THREADS)
     tid    = threadIdx().x
     idx    = (blockIdx().x - 1i32) * blockDim().x + tid
 
