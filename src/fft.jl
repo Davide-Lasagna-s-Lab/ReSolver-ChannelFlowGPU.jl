@@ -11,7 +11,7 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
                        order::NTuple{H, Int},
                             ::Type{T}=Float32;
                  padded_size::Union{Nothing, Dims}=nothing,
-                    nthreads::Union{Nothing, Int}=nothing) where {D, H, T}
+                    nthreads::Union{Nothing, Int} =nothing) where {D, H, T}
         all(1 ≤ d ≤ D for d in order) || throw(ArgumentError("order indices must be in 1:$D, got $order"))
         allunique(order)              || throw(ArgumentError("order indices must be unique, got $order"))
 

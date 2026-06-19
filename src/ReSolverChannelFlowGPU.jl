@@ -8,6 +8,7 @@ using CUDA: i32
 
 # TODO: benchmark residual
 # TODO: operator constructors
+# TODO: add launch configuration to FDGrids.jl
 
 __init__() = @assert CUDA.functional(true)
 

@@ -1,49 +1,43 @@
 # GPU kernels for derivatives of FTFields wrapping CuArrays.
 
-# TODO: tuning global parameters to store data, reducing allocations, and storing optimal threads
+const LAUNCH_PARAMS = Dict{Tuple{Type, NTuple}, Tuple{Int, Int}}()
 
-NSEBase.ddx_1!(out, u; adjoint=false, nthreads=nothing) = ddx!(out, u, Val(2); adjoint=adjoint, nthreads=nthreads)
+function get_launch_params(kernel_f::F, nelem::Int32, kernel_args...) where {F}
+    key = (F, map(typeof, kernel_args))
+    get!(LAUNCH_PARAMS, key) do
+        kernel   = @cuda launch=false kernel_f(kernel_args...)
+        config   = CUDA.launch_configuration(kernel.fun)
+        nthreads = Int32(min(config.threads, nelem))
+        blocks   = Int32(cld(nelem, nthreads))
+        (nthreads, blocks)
+    end
+end
+
+NSEBase.ddx_1!(out, u; adjoint=false) = ddx!(out, u, Val(2); adjoint=adjoint)
 function NSEBase.ddx_2!(out::FTField{G}, u::FTField{G}; adjoint::Bool=false, nthreads=nothing) where {G<:ChannelGrid}
     mul!(parent(out), adjoint ? NSEBase.grid(u).D₁⁺ : NSEBase.grid(u).D₁, parent(u), Val(1); nthreads=nthreads)
     return out
 end
-NSEBase.ddx_3!(out, u; adjoint=false, nthreads=nothing) = ddx!(out, u, Val(3); adjoint=adjoint, nthreads=nthreads)
-NSEBase.ddx_4!(out, u; adjoint=false, nthreads=nothing) = ddx!(out, u, Val(4); adjoint=adjoint, nthreads=nthreads)
+NSEBase.ddx_4!(out, u; adjoint=false) = ddx!(out, u, Val(4); adjoint=adjoint)
+NSEBase.ddx_3!(out, u; adjoint=false) = ddx!(out, u, Val(3); adjoint=adjoint)
 
 function NSEBase.ddx!(out::F,
                         u::F,
                          ::Val{DIM};
-                  adjoint::Bool=false,
-                 nthreads::TH  =nothing) where {DIM, T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, M, F<:Union{FTField{G, <:CuArray}, ProjectedField{G, M, <:CuArray}}, TH<:Union{Nothing, Int}}
+                  adjoint::Bool=false) where {DIM, T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, M, F<:Union{FTField{G, <:CuArray}, ProjectedField{G, M, <:CuArray}}}
     (isnothing(DIM) || isnothing(AXES[DIM])) && return :(return out)
     DIM ∉ ORDER && return :(throw(NSEBase.NotImplementedError(NSEBase.grid(u), Val($DIM))))
 
-    # get sizes
+    # kernel arguments
     sz     = Int32.(size(u))
     nelem  = Int32(prod(sz))
-
-    # spectral derivative parameters
     _ddx_sign  = adjoint ? -1im*one(T) : 1im*one(T)
-    _ddx_scale = wavenumber_scale(NSEBase.grid(u), DIM)
+    _ddx_scale = NSEBase.wavenumber_scale(NSEBase.grid(u), DIM)
 
-    # get optimal threads if not assigned during call
-    _nthreads, _blocks = if TH <: Nothing
-        _nthreads = optimal_threads(_ddx_kernel!,
-                                    parent(out), parent(u), sz, nelem,
-                                    _ddx_sign, _ddx_scale,
-                                    Val(Int32(DIM)), Val(Int32.(ORDER)),
-                                    max_threads=nelem)
-        _blocks = cld(nelem, _nthreads)
-        _nthreads, _blocks
-    else
-        nthreads, cld(nelem, nthreads)
-    end
+    kernel_args = (parent(out), parent(u), sz, nelem, _ddx_sign, _ddx_scale, Val(Int32(DIM)), Val(Int32.(ORDER)))
+    nthreads, blocks = get_launch_params(_ddx_kernel!, nelem, kernel_args...)
 
-    # launch kernel
-    @cuda threads=_nthreads blocks=_blocks _ddx_kernel!(
-        parent(out), parent(u), sz, nelem, _ddx_sign, _ddx_scale, Val(Int32(DIM)), Val(Int32.(ORDER))
-    )
-
+    @cuda threads=nthreads blocks=blocks _ddx_kernel!(kernel_args...)
     return out
 end
 
@@ -66,23 +60,11 @@ end
     end
 end
 
-initialise_ddx!(out::F, u::F, ::Val{DIM}) where {T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, F<:Union{FTField{G}, ProjectedField{G}}, DIM} =
-    optimal_threads(_ddx_kernel!,
-                    out, u, Int32.(size(u)), Int32(prod(size(u))),
-                    one(Complex{T}), NSEBase.wavenumber_scale(NSEBase.grid(u), DIM),
-                    Val(Int32(DIM)), Val(Int32.(ORDER));
-                    max_threads=nelem)
-
-initialise_ddx!(out::F, u::F, ::Val{1}; adjoint=false) where {T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, F<:Union{FTField{G}, ProjectedField{G}}} =
-    FDGrids.optimal_forward_threads(parent(out), 
-                                    adjoint ? NSEBase.grid(u).D₁⁺ : NSEBase.grid(u).D₁,
-                                    parent(u),
-                                    Val(1))
 
 
 function NSEBase.laplacian!(out::FTField{G, <:CuArray}, u::FTField{G, <:CuArray}; nthreads=nothing, kwargs...) where {G}
     NSEBase.inhomogeneous_laplacian!(out, u; nthreads=nthreads, kwargs...)
-    NSEBase.add_homogeneous_laplacian!(out, u; nthreads=nthreads)
+    NSEBase.add_homogeneous_laplacian!(out, u)
 end
 
 function NSEBase.inhomogeneous_laplacian!(out::FTField{G, <:CuArray}, u::FTField{G, <:CuArray}; adjoint::Bool=false, nthreads=nothing) where {G<:AbstractChannelGrid{<:Any, <:Any}}
@@ -90,34 +72,17 @@ function NSEBase.inhomogeneous_laplacian!(out::FTField{G, <:CuArray}, u::FTField
     return out
 end
 
-function NSEBase.add_homogeneous_laplacian!(out::FTField{G, <:CuArray},
-                                              u::FTField{G, <:CuArray};
-                                       nthreads::TH=nothing) where {G, TH<:Union{Nothing, Int}}
-    # get sizes
+function NSEBase.add_homogeneous_laplacian!(out::FTField{G, A},
+                                              u::FTField{G, A}) where {G<:AbstractGrid, A<:CuArray}
+    # kernel arguments
     sz     = Int32.(size(u))
     nelem  = Int32(prod(sz))
+    scales = map(d -> NSEBase.wavenumber_scale(NSEBase.grid(u), d), spatial_fft_dims(NSEBase.grid(u)))
 
-    # spectral derivative parameters
-    _scales = map(d -> wavenumber_scale(NSEBase.grid(u), d), spatial_fft_dims(NSEBase.grid(u)))
+    kernel_args = (parent(out), parent(u), sz, nelem, scales, Val(Int32.(spatial_fft_dims(NSEBase.grid(u)))), Val(Int32(NSEBase.fft_dims(NSEBase.grid(u))[1])))
+    nthreads, blocks = get_launch_params(_add_homogeneous_laplacian_kernel!, nelem, kernel_args...)
 
-    # get optimal threads if not assigned during call
-    _nthreads, _blocks = if TH <: Nothing
-        _nthreads = optimal_threads(_add_homogeneous_laplacian_kernel!,
-                                    parent(out), parent(u), sz, nelem,
-                                    _scales,
-                                    Val(Int32.(spatial_fft_dims(NSEBase.grid(u)))), Val(Int32(NSEBase.fft_dims(NSEBase.grid(u))[1])),
-                                    max_threads=nelem)
-        _blocks = cld(nelem, _nthreads)
-        _nthreads, _blocks
-    else
-        nthreads, cld(nelem, nthreads)
-    end
-
-    # launch kernel
-    @cuda threads=_nthreads blocks=_blocks _add_homogeneous_laplacian_kernel!(
-        parent(out), parent(u), sz, nelem, _scales, Val(Int32.(spatial_fft_dims(NSEBase.grid(u)))), Val(Int32(NSEBase.fft_dims(NSEBase.grid(u))[1]))
-    )
-
+    @cuda threads=nthreads blocks=blocks _add_homogeneous_laplacian_kernel!(kernel_args...)
     return out
 end
 NSEBase.add_homogeneous_laplacian!(out::VectorField{N, F}, u::VectorField{N, F}; nthreads=nothing) where {N, G, F<:FTField{G, <:CuArray}} =

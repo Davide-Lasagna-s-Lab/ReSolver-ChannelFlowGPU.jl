@@ -43,12 +43,4 @@
     Ψ = (Ψ₁, zero(Ψ₁), zero(Ψ₁))
     a = CUDA.cu(project(FFT(VectorField(g, u_fun)), Ψ))
     @test Array(parent(NSEBase.ddx_4!(similar(a), a))) ≈ project(FFT(VectorField(g, dudt_fun)), Ψ)
-
-    # # test allocation
-    # fun(dx, a, b) = @allocated dx(a, b)
-    # @test fun(NSEBase.ddx_1!,     FTFieldGPU(g), u) == 0
-    # @test fun(NSEBase.ddx_2!,     FTFieldGPU(g), u) == 0
-    # @test fun(NSEBase.ddx_3!,     FTFieldGPU(g), u) == 0
-    # @test fun(NSEBase.laplacian!, FTFieldGPU(g), u) == 0
-    # @test fun(NSEBase.ddx_4!,        similar(a), a) == 0
 end
