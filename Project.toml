@@ -9,6 +9,7 @@ projects = ["test", "benchmark"]
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+FDGrids = "28eb41cd-435a-4ede-8bdb-f2685fc03e8c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NSEBase = "9778a910-ce4d-423e-92be-12991f0cf10c"
 ReSolverChannelFlow = "ea847659-7271-4841-b0fc-79dd10df6815"
