@@ -8,7 +8,7 @@ using CUDA: i32
 
 # TODO: benchmark residual
 # TODO: add launch configuration to FDGrids.jl
-# TODO: turn off info in autotuning
+# TODO: is it possible to remove optimal_threads?
 # TODO: actual tests for construction, galerkin, and dot
 
 # The goal is to make this an extension to NSEBase.jl. To do this, I think a new
@@ -22,11 +22,22 @@ using NSEBase,
       ReSolverChannelFlow,
       FDGrids
 
+export show_tuning_info
 export CuFFTPlans
 export DotTwoStage, DotAtomic, DotShared
 export ProjectBroadcast, ProjectLoop, ProjectShared
 export ExpandBroadcast, ExpandModal
 export FTFieldGPU, FieldGPU, ProjectedFieldGPU
+
+const TUNING_INFO = Ref(false)
+
+"""
+    show_tuning_info(show_info::Bool)
+
+Toggle extra information when performing kernel tuning for Galerkin methods
+and dot product of `ProjectedField`.
+"""
+show_tuning_info(show_info::Bool) = TUNING_INFO[] = show_info
 
 """
     optimal_threads(kernel!, args...; max_threads=nothing) -> Int

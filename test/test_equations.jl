@@ -31,8 +31,6 @@
     b   = ProjectedField(g, Ψ)
     out = ProjectedField(g, Ψ)
     u = VectorField(g)
-    ReSolverChannelFlowGPU.initialise_project!(a, u)
-    ReSolverChannelFlowGPU.initialise_expand!(u, a)
     @test_nowarn op(out, a)
     @test_nowarn op(out, a, b)
 end

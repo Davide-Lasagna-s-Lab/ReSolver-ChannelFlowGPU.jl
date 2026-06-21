@@ -213,7 +213,7 @@ function autotune_project(a, u)
     end
 
     best = candidates[argmin(times)]
-    @info "Auto-tuned galerkin projection" typeof(a) typeof(u) best=typeof(best) times_ns=times
+    TUNING_INFO[] && (@info "Auto-tuned galerkin projection" best=typeof(best) times_ns=times)
     return best
 end
 
@@ -712,7 +712,7 @@ function autotune_expand(u, a)
     end
 
     best = candidates[argmin(times)]
-    @info "Auto-tuned galerkin expansion" typeof(u) typeof(a) best=typeof(best) times_ns=times
+    TUNING_INFO[] && @info "Auto-tuned galerkin expansion" best=typeof(best) times_ns=times
     return best
 end
 

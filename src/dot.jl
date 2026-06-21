@@ -208,7 +208,6 @@ Logs the winner and all trial times via `@info`.
 
     autotune_dot(a) -> best::DotMethod
 """
-# TODO: allow option to turn off info
 function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
     pa = parent(a)
     sz = size(pa)
@@ -235,7 +234,7 @@ function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
     end
 
     best = candidates[argmin(times)]
-    @info "Auto-tuned dot product" typeof(a) best=typeof(best) times_ns=times
+    TUNING_INFO[] && (@info "Auto-tuned dot product" best=typeof(best) times_ns=times)
     return best
 end
 
