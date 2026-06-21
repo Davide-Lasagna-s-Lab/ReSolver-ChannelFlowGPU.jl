@@ -1,5 +1,7 @@
 # CUDA FFT plans.
 
+# TODO: use launch configuration approach for threads (like derivatives.jl) which unifies this more with FFTPlans
+
 struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
      plan::PLAN
     iplan::IPLAN
@@ -10,6 +12,7 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
     function CuFFTPlans(size::Dims{D},
                        order::NTuple{H, Int},
                             ::Type{T}=Float32;
+                       flags                      =nothing,
                  padded_size::Union{Nothing, Dims}=nothing,
                     nthreads::Union{Nothing, Int} =nothing) where {D, H, T}
         all(1 ≤ d ≤ D for d in order) || throw(ArgumentError("order indices must be in 1:$D, got $order"))
@@ -53,9 +56,8 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
 end
 
 CuFFTPlans(g::NSEBase.AbstractGrid{T}; kwargs...) where {T} = CuFFTPlans(size(g), NSEBase.fft_dims(g), T; kwargs...)
-CuFFTPlans(u::FTField;                 kwargs...)           = CuFFTPlans(grid(u); kwargs...)
-CuFFTPlans(u::Field;                   kwargs...)           = CuFFTPlans(grid(u); kwargs...)
-CuFFTPlans(u::VectorField;             kwargs...)           = CuFFTPlans(grid(u); kwargs...)
+
+NSEBase.FFTPlans(g::ChannelGrid{<:Any, <:Any, <:CuArray}; kwargs...) = CuFFTPlans(g; kwargs...)
 
 # ------------------------ #
 # in-place transformations #

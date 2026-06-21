@@ -37,7 +37,7 @@ struct ProjectBroadcast{T} <: ProjectMethod
     ws::Vector{T}
 
     ProjectBroadcast(a::ProjectedField{<:AbstractGrid{T}}) where {T} =
-        new{T}(Array(grid(a).ws))
+        new{T}(Array(NSEBase.grid(a).ws))
 end
 
 """
@@ -87,7 +87,7 @@ struct ProjectLoop{D} <: ProjectMethod
         nelem = Int32(prod(sz))
         _threads = if isnothing(threads)
             optimal_threads(_project_loop_kernel!,
-                            pa, modes(a), u, grid(u).ws,
+                            pa, modes(a), u, NSEBase.grid(u).ws,
                             sz, nelem,
                             Val(Int32(N)), Val(Int32(S[2]));
                             max_threads=nelem)
@@ -142,7 +142,7 @@ struct ProjectShared{D} <: ProjectMethod
         nelem = Int32(prod(sz))
         _threads = if isnothing(threads)
             optimal_threads(_project_shared_kernel!,
-                            pa, modes(a), u, grid(u).ws,
+                            pa, modes(a), u, NSEBase.grid(u).ws,
                             sz, nelem,
                             Val(Int32(N)), Val(Int32(S[2]));
                             max_threads=nelem)
@@ -194,7 +194,7 @@ Logs the winner and all trial times via `@info`.
 function autotune_project(a, u)
     # Construct all candidate methods
     candidates = ProjectMethod[
-        ProjectBroadcast(a, u),
+        ProjectBroadcast(a),
         ProjectLoop(a, u),
         ProjectShared(a, u),
     ]
@@ -358,7 +358,7 @@ function _project!(a::ProjectedField{G},
         for n in 1:N
             for m in axes(a, 1)
                 for ny in 1:S[2]
-                    mode_ny = view(modes(a)[n], ny, m, :, :, :)
+                    mode_ny = view(modes(a)[n], m, ny, :, :, :)
                     profs_ny = view(u[n], ny, :, :, :)
                     pa_m = view(pa, m, :, :, :)
                     @. pa_m += ws[ny]*dot(mode_ny, profs_ny)
@@ -387,7 +387,7 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}},
     blocks  = cache.blocks
 
     @cuda threads=threads blocks=blocks _project_loop_kernel!(
-        parent(a), modes(a), u, grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
+        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
     )
 
     return a
@@ -410,7 +410,7 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}},
     blocks  = cache.blocks
 
     @cuda threads=threads blocks=blocks _project_shared_kernel!(
-        parent(a), modes(a), u, grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
+        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
     )
 
     return a
@@ -434,7 +434,7 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}}, u::VectorField{N}, ::Pro
     blocks = cld(nelem, threads)
 
     @cuda threads=threads blocks=blocks _project_warp_kernel!(
-        parent(a), modes(a), u, grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
+        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
     )
 
     return a
@@ -462,8 +462,8 @@ function _project_loop_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, 
     acc = zero(eltype(a))
     for n in 1:N
         for ny in 1:Ny
-            J = CartesianIndex(ny,       I[2], I[3], I[4])
-            K = CartesianIndex(ny, I[1], I[2], I[3], I[4])
+            J = CartesianIndex(      ny, I[2], I[3], I[4])
+            K = CartesianIndex(I[1], ny, I[2], I[3], I[4])
             acc += ws[ny]*dot(modes[n][K], u[n][J])
         end
     end
@@ -500,8 +500,8 @@ function _project_shared_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField
     acc = zero(eltype(a))
     for n in 1:N
         for ny in 1:Ny
-            J = CartesianIndex(ny,       I[2], I[3], I[4])
-            K = CartesianIndex(ny, I[1], I[2], I[3], I[4])
+            J = CartesianIndex(      ny, I[2], I[3], I[4])
+            K = CartesianIndex(I[1], ny, I[2], I[3], I[4])
             acc += ws[ny]*dot(modes[n][K], u[n][J])
         end
     end
@@ -538,8 +538,8 @@ function _project_warp_kernel!(a::CuDeviceArray, modes::NTuple, u::VectorField, 
         while lane < total
             n  = lane÷Ny + 1i32
             ny = lane%Ny + 1i32
-            J = CartesianIndex(ny,       I[2], I[3], I[4])
-            K = CartesianIndex(ny, I[1], I[2], I[3], I[4])
+            J = CartesianIndex(      ny, I[2], I[3], I[4])
+            K = CartesianIndex(I[1], ny, I[2], I[3], I[4])
             @inbounds acc += ws[ny]*dot(modes[n][K], u[n][J])
             lane += 32i32
         end
@@ -693,7 +693,7 @@ Logs the winner and all trial times via `@info`.
 function autotune_expand(u, a)
     # Construct all candidate methods
     candidates = ExpandMethod[
-        ExpandBroadcast(u, a),
+        ExpandBroadcast(),
         ExpandModal(u, a, false),
         ExpandModal(u, a, true),
     ]
@@ -741,7 +741,7 @@ end
 See also: [`reset_expand_cache!`](@ref)
 """
 function initialise_expand!(u::VectorField, a::ProjectedField)
-    project_method(u, a)
+    expand_method(u, a)
     return nothing
 end
 
@@ -857,8 +857,8 @@ function _expand!(u::VectorField{N}, a::ProjectedField{<:ChannelGrid{S, T}}, ::E
             a_m = view(pa, m, :, :, :)
             for ny in 1:S[2]
                 pu_n_ny = view(pu_n, ny, :, :, :)
-                modes_n_ny_m = view(modes_n, ny, m, :, :, :)
-                pu_n_ny .+= a_m.*modes_n_ny_m
+                modes_n_m_ny = view(modes_n, m, ny, :, :, :)
+                pu_n_ny .+= a_m.*modes_n_m_ny
             end
         end
     end
@@ -926,7 +926,7 @@ function _expand_modal_1_kernel!(u, a, modes, sz, nelem, nelem_tot, ::Val{N}, ::
 
     acc = zero(eltype(a))
     for m in 1:M
-        @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][I[1], m, I[2], I[3], I[4]]
+        @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][m, I[1], I[2], I[3], I[4]]
     end
     @inbounds u[n][I] = acc
 
@@ -948,7 +948,7 @@ function _expand_modal_2_kernel!(u, a, modes, sz, nelem, ::Val{N}, ::Val{M}) whe
     for n in 1:N
         acc = zero(eltype(a))
         for m in 1:M
-            @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][I[1], m, I[2], I[3], I[4]]
+            @inbounds acc += a[m, I[2], I[3], I[4]]*modes[n][m, I[1], I[2], I[3], I[4]]
         end
         @inbounds u[n][I] = acc
     end

@@ -40,7 +40,7 @@
         NSEBase.apply_symmetry!(@view(Ψ₁[m, :, :, :, :]), (2, 3, 4))
         Ψ₁[m, :, 1, 1, 1] .= real.(Ψ₁[m, :, 1, 1, 1])
     end
-    Ψ = (Ψ₁, zero(Ψ₁), zero(Ψ₁))
+    Ψ = (Ψ₁,)
     a = CUDA.cu(project(FFT(VectorField(g, u_fun)), Ψ))
     @test Array(parent(NSEBase.ddx_4!(similar(a), a))) ≈ project(FFT(VectorField(g, dudt_fun)), Ψ)
 end

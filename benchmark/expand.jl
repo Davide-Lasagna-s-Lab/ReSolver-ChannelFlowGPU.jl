@@ -32,7 +32,7 @@ function make_fields(S, M, N)
                     rand(S[2]))
 
     # ProjectedField — CuArray backed
-    a = ProjectedField(g, ntuple(_ -> randn(ComplexF64, S[2], M, (S[1] >> 1) + 1, S[3], S[4]), N))
+    a = ProjectedField(g, ntuple(_ -> randn(ComplexF64, M, S[2], (S[1] >> 1) + 1, S[3], S[4]), N))
 
     # VectorField of N FTFields
     u = VectorField([FTField(g) for _ in 1:N]...)
@@ -200,7 +200,7 @@ end
 # ============================================================
 function run_expand_benchmarks()
     println("="^70)
-    println("ProjectedField projection benchmark")
+    println("ProjectedField expansion benchmark")
     println("="^70)
 
     # ── detailed benchmark at reference size ──────────────────────────── #
