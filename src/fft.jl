@@ -6,12 +6,11 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
     cache::CA
      norm::T
 
-    # TODO: replace unused keyword arguments with kwargs...
     function CuFFTPlans(size::Dims{D},
                        order::NTuple{H, Int},
                             ::Type{T}=Float32;
-                       flags                      =nothing,
-                 padded_size::Union{Nothing, Dims}=nothing) where {D, H, T}
+                 padded_size::Union{Nothing, Dims}=nothing,
+                   kwargs...) where {D, H, T}
         all(1 ≤ d ≤ D for d in order) || throw(ArgumentError("order indices must be in 1:$D, got $order"))
         allunique(order)              || throw(ArgumentError("order indices must be unique, got $order"))
 
