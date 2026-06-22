@@ -1,18 +1,5 @@
 # GPU kernels for derivatives of FTFields wrapping CuArrays.
 
-const LAUNCH_PARAMS = Dict{Tuple{Type, NTuple}, Tuple{Int, Int}}()
-
-function get_launch_params(kernel_f::F, nelem::Int32, kernel_args...) where {F}
-    key = (F, map(typeof, kernel_args))
-    get!(LAUNCH_PARAMS, key) do
-        kernel   = @cuda launch=false kernel_f(kernel_args...)
-        config   = CUDA.launch_configuration(kernel.fun)
-        nthreads = Int32(min(config.threads, nelem))
-        blocks   = Int32(cld(nelem, nthreads))
-        (nthreads, blocks)
-    end
-end
-
 NSEBase.ddx_1!(out, u; adjoint=false) = ddx!(out, u, Val(2); adjoint=adjoint)
 function NSEBase.ddx_2!(out::FTField{G}, u::FTField{G}; adjoint::Bool=false, nthreads=nothing) where {G<:ChannelGrid}
     mul!(parent(out), adjoint ? NSEBase.grid(u).D₁⁺ : NSEBase.grid(u).D₁, parent(u), Val(1); nthreads=nthreads)
@@ -34,10 +21,11 @@ function NSEBase.ddx!(out::F,
     _ddx_sign  = adjoint ? -1im*one(T) : 1im*one(T)
     _ddx_scale = NSEBase.wavenumber_scale(NSEBase.grid(u), DIM)
 
+    # launch kernel
     kernel_args = (parent(out), parent(u), sz, nelem, _ddx_sign, _ddx_scale, Val(Int32(DIM)), Val(Int32.(ORDER)))
     nthreads, blocks = get_launch_params(_ddx_kernel!, nelem, kernel_args...)
-
     @cuda threads=nthreads blocks=blocks _ddx_kernel!(kernel_args...)
+
     return out
 end
 
@@ -79,10 +67,11 @@ function NSEBase.add_homogeneous_laplacian!(out::FTField{G, A},
     nelem  = Int32(prod(sz))
     scales = map(d -> NSEBase.wavenumber_scale(NSEBase.grid(u), d), spatial_fft_dims(NSEBase.grid(u)))
 
+    # launch kernel
     kernel_args = (parent(out), parent(u), sz, nelem, scales, Val(Int32.(spatial_fft_dims(NSEBase.grid(u)))), Val(Int32(NSEBase.fft_dims(NSEBase.grid(u))[1])))
     nthreads, blocks = get_launch_params(_add_homogeneous_laplacian_kernel!, nelem, kernel_args...)
-
     @cuda threads=nthreads blocks=blocks _add_homogeneous_laplacian_kernel!(kernel_args...)
+
     return out
 end
 NSEBase.add_homogeneous_laplacian!(out::VectorField{N, F}, u::VectorField{N, F}; nthreads=nothing) where {N, G, F<:FTField{G, <:CuArray}} =

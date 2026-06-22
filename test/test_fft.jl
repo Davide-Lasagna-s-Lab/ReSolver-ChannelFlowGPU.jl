@@ -17,7 +17,7 @@
             cache = CUDA.zeros(ComplexF32, M_spec_pad)
 
             NSEBase._apply_mask!(cache)
-            NSEBase._copy_to_padded!(cache, u, (1,), 256)
+            NSEBase._copy_to_padded!(cache, u, (1,))
 
             # resolved range is embedded at the low end; padding zone stays zero
             @test Array(cache[1:M_spec]) ≈ Array(u)
@@ -25,7 +25,7 @@
 
             # round-trip
             u2 = CUDA.zeros(ComplexF32, M_spec)
-            NSEBase._copy_from_padded!(u2, cache, (1,), 256)
+            NSEBase._copy_from_padded!(u2, cache, (1,))
             @test Array(u2) ≈ Array(u)
         end
 
@@ -39,11 +39,11 @@
             cache = CUDA.zeros(ComplexF64, M_spec_pad, N_pad)
 
             NSEBase._apply_mask!(cache)
-            NSEBase._copy_to_padded!(cache, u, (1, 2), 256)
+            NSEBase._copy_to_padded!(cache, u, (1, 2))
 
             # round-trip
             u2 = CUDA.zeros(ComplexF64, M_spec, N)
-            NSEBase._copy_from_padded!(u2, cache, (1, 2), 256)
+            NSEBase._copy_from_padded!(u2, cache, (1, 2))
             @test Array(u2) ≈ Array(u)
 
             # positive-frequency block is at the low end of each dim
@@ -67,10 +67,10 @@
             cache = CUDA.zeros(ComplexF64, L_spec_pad, M_pad, N_pad)
 
             NSEBase._apply_mask!(cache)
-            NSEBase._copy_to_padded!(cache, u, (1, 2, 3), 256)
+            NSEBase._copy_to_padded!(cache, u, (1, 2, 3))
 
             u2 = CUDA.zeros(ComplexF64, L_spec, M, N)
-            NSEBase._copy_from_padded!(u2, cache, (1, 2, 3), 256)
+            NSEBase._copy_from_padded!(u2, cache, (1, 2, 3))
             @test Array(u2) ≈ Array(u)
         end
 
@@ -82,7 +82,7 @@
             accum = CUDA.randn(ComplexF64, M_spec)
             accum0 = copy(accum)
 
-            NSEBase._add_from_padded!(accum, cache, (1,), 256)
+            NSEBase._add_from_padded!(accum, cache, (1,))
             @test Array(accum) ≈ Array(accum0) .+ Array(cache)[1:M_spec]
         end
 
@@ -95,7 +95,7 @@
             accum = CUDA.randn(ComplexF64, M_spec, N)
             accum0 = copy(accum)
 
-            NSEBase._add_from_padded!(accum, cache, (1, 2), 256)
+            NSEBase._add_from_padded!(accum, cache, (1, 2))
 
             # positive-frequency block
             N_pos = (N >> 1) + 1
@@ -112,22 +112,22 @@
     @testset "Plan construction        " begin
         for T in [Float64, Float32]
             # 1D: cache is the standard spectral shape, norm = 1/N, fixed threads
-            p = CuFFTPlans((8,), (1,), T, nthreads=256)
+            p = CuFFTPlans((8,), (1,), T)
             @test p.norm ≈ T(1/13)
             @test size(p.cache) == (7,)
 
             # 2D, rfft dim only: dim-2 untransformed, norm = 1/M, fixed threads
-            p = CuFFTPlans((8, 6), (1,), T, nthreads=256)
+            p = CuFFTPlans((8, 6), (1,), T)
             @test p.norm == T(1/13)
             @test size(p.cache) == (7, 6)
 
             # 2D, both dims transformed: norm = 1/(M*N), fixed threads
-            p = CuFFTPlans((8, 6), (1, 2), T, nthreads=256)
+            p = CuFFTPlans((8, 6), (1, 2), T)
             @test p.norm == T(1/(13*9))
             @test size(p.cache) == (7, 9)
 
             # 3D, all dims transformed
-            p = CuFFTPlans((4, 6, 8), (1, 2, 3), T, nthreads=256)
+            p = CuFFTPlans((4, 6, 8), (1, 2, 3), T)
             @test p.norm == T(1/(7*9*13))
             @test size(p.cache) == (4, 9, 13)
 
@@ -144,7 +144,7 @@
         # construct plans
         sz = (4, 6, 8)
         odr = (1, 2, 3)
-        p = CuFFTPlans(sz, odr, Float32, nthreads=256)
+        p = CuFFTPlans(sz, odr, Float32)
 
         # construct fields to be transformed
         pad_sz = NSEBase.get_padded_size(sz, odr)

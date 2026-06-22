@@ -1,20 +1,17 @@
 # CUDA FFT plans.
 
-# TODO: use launch configuration approach for threads (like derivatives.jl) which unifies this more with FFTPlans
-
 struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
      plan::PLAN
     iplan::IPLAN
     cache::CA
      norm::T
-  threads::Int
 
+    # TODO: replace unused keyword arguments with kwargs...
     function CuFFTPlans(size::Dims{D},
                        order::NTuple{H, Int},
                             ::Type{T}=Float32;
                        flags                      =nothing,
-                 padded_size::Union{Nothing, Dims}=nothing,
-                    nthreads::Union{Nothing, Int} =nothing) where {D, H, T}
+                 padded_size::Union{Nothing, Dims}=nothing) where {D, H, T}
         all(1 ≤ d ≤ D for d in order) || throw(ArgumentError("order indices must be in 1:$D, got $order"))
         allunique(order)              || throw(ArgumentError("order indices must be unique, got $order"))
 
@@ -32,26 +29,10 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
         physical_array   = CUDA.zeros(T, grid_size)
         norm             = T(1/prod(grid_size[i] for i in order))
 
-        _nthreads = if isnothing(nthreads)
-            # Use a representative problem size — the largest block this plan will transfer
-            dummy_dest  = spectral_array
-            dummy_src   = CUDA.zeros(Complex{T}, NSEBase._get_transform_size(size, order[1]))
-            dest_starts = Int32.(ntuple(k -> 0, Val(ndims(dummy_src))))
-            dest_sizes  = Int32.(ntuple(k -> Base.size(dummy_src, k), Val(ndims(dummy_src))))
-            src_offsets = Int32.(ntuple(k -> 0, Val(ndims(dummy_src))))
-            optimal_threads(_loopblk_kernel!,
-                            dummy_dest, dummy_src,
-                            dest_starts, dest_sizes, src_offsets,
-                            Val(false),
-                            max_threads=prod(dest_sizes))
-        else
-            nthreads
-        end
-
         plan  = cuFFT.plan_rfft( physical_array,                      order)
         iplan = cuFFT.plan_brfft(spectral_array, grid_size[order[1]], order)
 
-        return new{D, T, order, typeof(plan), typeof(iplan), typeof(spectral_array)}(plan, iplan, spectral_array, norm, _nthreads)
+        return new{D, T, order, typeof(plan), typeof(iplan), typeof(spectral_array)}(plan, iplan, spectral_array, norm)
     end
 end
 
@@ -75,12 +56,12 @@ end
 (f::CuFFTPlans{<:Any, T})(û::AbstractArray{Complex{T}},
                           u::AbstractArray{        T},
                         add::Bool) where {T} =
-    _forward_transform!(û, u, f, add, f.threads)
+    _forward_transform!(û, u, f, add)
 
-function _forward_transform!(û, u, f::CuFFTPlans{D, <:Any, ORDER}, add::Bool, threads) where {D, ORDER}
+function _forward_transform!(û, u, f::CuFFTPlans{D, <:Any, ORDER}, add::Bool) where {D, ORDER}
     cuFFT.unsafe_execute!(f.plan, u, f.cache)
     f.cache .*= f.norm
-    add ? NSEBase._add_from_padded!(û, f.cache, ORDER, threads) : NSEBase._copy_from_padded!(û, f.cache, ORDER, threads)
+    add ? NSEBase._add_from_padded!(û, f.cache, ORDER) : NSEBase._copy_from_padded!(û, f.cache, ORDER)
     return û
 end
 
@@ -95,11 +76,11 @@ end
 
 (f::CuFFTPlans{<:Any, T})(u::AbstractArray{        T},
                           û::AbstractArray{Complex{T}}) where {T} =
-    _backward_transform!(u, û, f, f.threads)
+    _backward_transform!(u, û, f)
 
-function _backward_transform!(u, û, f::CuFFTPlans{D, <:Any, ORDER}, threads) where {D, ORDER}
+function _backward_transform!(u, û, f::CuFFTPlans{D, <:Any, ORDER}) where {D, ORDER}
     NSEBase._apply_mask!(f.cache)
-    NSEBase._copy_to_padded!(f.cache, û, ORDER, threads)
+    NSEBase._copy_to_padded!(f.cache, û, ORDER)
     cuFFT.unsafe_execute!(f.iplan, f.cache, u)
     return u
 end
@@ -107,69 +88,8 @@ end
 #--------------------------- #
 # dealiasing utility methods #
 #--------------------------- #
+# ! only needed because NSEBase._apply_mask! is defined for Array rather than AbstractArray
 NSEBase._apply_mask!(cache::CuArray{T}) where {T} = (cache .= zero(T); return cache)
-
-NSEBase._copy_to_padded!(cache, u, order, threads)   = NSEBase._transfer_padded!(cache, u, order, Val(false), threads)
-NSEBase._copy_from_padded!(u, cache, order, threads) = NSEBase._transfer_padded!(u, cache, order, Val(false), threads)
-NSEBase._add_from_padded!(u, cache, order, threads)  = NSEBase._transfer_padded!(u, cache, order, Val(true),  threads)
-
-function NSEBase._transfer_padded!(dest, src, ord::NTuple{1, Int}, vadd::Val, threads)
-    # rfft dim only: compact array is a prefix of the padded array, so the same
-    # index block (1..size(compact,i) in every dim) is valid in both.
-    compact = size(dest, ord[1]) <= size(src, ord[1]) ? dest : src
-    vd  = Val(ndims(dest))
-    blk = ntuple(i -> 1:size(compact, i), vd)
-    NSEBase._loopblk!(dest, blk, src, blk, vadd, threads)
-    return dest
-end
-
-function NSEBase._transfer_padded!(dest, src, ord::NTuple{2, Int}, vadd::Val, threads)
-    vd = Val(ndims(dest))
-    d  = ord[2]
-    compact = size(dest, ord[1]) <= size(src, ord[1]) ? dest : src
-    padded  = compact === dest ? src : dest
-    npos = (size(compact, d) >> 1) + 1
-    nneg = size(compact, d) - npos
-
-    # Positive block: same compact-sized range in both arrays.
-    blk = ntuple(i -> i == d ? (1:npos) : (1:size(compact, i)), vd)
-    NSEBase._loopblk!(dest, blk, src, blk, vadd, threads)
-
-    # Negative block: indices differ between compact and padded arrays.
-    if nneg > 0
-        blk_co = ntuple(i -> i == d ? (npos+1:size(compact, d))                : (1:size(compact, i)), vd)
-        blk_pa = ntuple(i -> i == d ? (size(padded, d)-nneg+1:size(padded, d)) : (1:size(compact, i)), vd)
-        dest === compact ? NSEBase._loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
-                           NSEBase._loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
-    end
-    return dest
-end
-
-function NSEBase._transfer_padded!(dest, src, ord::NTuple{3, Int}, vadd::Val, threads)
-    vd     = Val(ndims(dest))
-    d2, d3 = ord[2], ord[3]
-    compact = size(dest, ord[1]) <= size(src, ord[1]) ? dest : src
-    padded  = compact === dest ? src : dest
-    npos2 = (size(compact, d2) >> 1) + 1;  nneg2 = size(compact, d2) - npos2
-    npos3 = (size(compact, d3) >> 1) + 1;  nneg3 = size(compact, d3) - npos3
-
-    # Iterate over all four quadrants of the (d2, d3) frequency plane.
-    for (rco2, rpa2) in ((1:npos2,                   1:npos2),
-                         (npos2+1:size(compact, d2), size(padded, d2)-nneg2+1:size(padded, d2)))
-        isempty(rco2) && continue
-        for (rco3, rpa3) in ((1:npos3,                   1:npos3),
-                             (npos3+1:size(compact, d3), size(padded, d3)-nneg3+1:size(padded, d3)))
-            isempty(rco3) && continue
-            blk_co = ntuple(i -> i == d2 ? rco2 : i == d3 ? rco3 : (1:size(compact, i)), vd)
-            blk_pa = ntuple(i -> i == d2 ? rpa2 : i == d3 ? rpa3 : (1:size(compact, i)), vd)
-            dest === compact ? NSEBase._loopblk!(dest, blk_co, src, blk_pa, vadd, threads) :
-                               NSEBase._loopblk!(dest, blk_pa, src, blk_co, vadd, threads)
-        end
-    end
-    return dest
-end
-
-NSEBase._transfer_padded!(_, _, ord::NTuple, _, _) = throw(NSEBase.NotImplementedError(ord))
 
 """
 Launch `_loopblk_kernel!` for a single contiguous block.
@@ -180,16 +100,15 @@ never passed to the device.
                                      ar::NTuple{D},
                                     src::CuArray,
                                      br::NTuple{D},
-                                   vadd::Val,
-                                threads::Int) where {D}
+                                   vadd::Val) where {D}
     # All range arithmetic happens here on the host
     dest_starts = Int32.(ntuple(k ->  first(ar[k]) - 1           , Val(D)))
     dest_sizes  = Int32.(ntuple(k -> length(ar[k])               , Val(D)))
     src_offsets = Int32.(ntuple(k ->  first(br[k]) - first(ar[k]), Val(D)))
 
-    @cuda threads=threads blocks=cld(prod(dest_sizes), threads) _loopblk_kernel!(
-        dest, src, dest_starts, dest_sizes, src_offsets, vadd
-    )
+    kernel_args = (dest, src, dest_starts, dest_sizes, src_offsets, vadd)
+    nthreads, blocks = get_launch_params(_loopblk_kernel!, Int32(prod(dest_sizes)), kernel_args...)
+    @cuda threads=nthreads blocks=blocks _loopblk_kernel!(kernel_args...)
     return nothing
 end
 

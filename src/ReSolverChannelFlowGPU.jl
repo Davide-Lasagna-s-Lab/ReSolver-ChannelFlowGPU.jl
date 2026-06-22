@@ -8,13 +8,8 @@ using CUDA: i32
 
 # TODO: benchmark residual
 # TODO: add launch configuration to FDGrids.jl
-# TODO: is it possible to remove optimal_threads?
+# TODO: use LAUNCH_CONFIG for galerkin methods and remove optimal_threads
 # TODO: actual tests for construction, galerkin, and dot
-
-# The goal is to make this an extension to NSEBase.jl. To do this, I think a new
-# type parameter for AbstractGrid would be useful. This would allow correct dispatch
-# of constructors for the operators and FFT plans without having to significantly
-# modify the base code.
 
 __init__() = @assert CUDA.functional(true)
 
@@ -38,6 +33,20 @@ Toggle extra information when performing kernel tuning for Galerkin methods
 and dot product of `ProjectedField`.
 """
 show_tuning_info(show_info::Bool) = TUNING_INFO[] = show_info
+
+
+const LAUNCH_PARAMS = Dict{Tuple{Type, NTuple}, Tuple{Int, Int}}()
+
+function get_launch_params(kernel_f::F, nelem::Int32, kernel_args...) where {F}
+    key = (F, map(typeof, kernel_args))
+    get!(LAUNCH_PARAMS, key) do
+        kernel   = @cuda launch=false kernel_f(kernel_args...)
+        config   = CUDA.launch_configuration(kernel.fun)
+        nthreads = Int32(min(config.threads, nelem))
+        blocks   = Int32(cld(nelem, nthreads))
+        (nthreads, blocks)
+    end
+end
 
 """
     optimal_threads(kernel!, args...; max_threads=nothing) -> Int
@@ -115,6 +124,8 @@ FieldGPU(g::ChannelGrid{S}, ::Type{T}=Float32; kwargs...) where {S, T} =
     Field(CUDA.cu(g), CUDA.zeros(T, size(g)); kwargs...)
 ProjectedFieldGPU(g::ChannelGrid, modes) = throw(NSEBase.NotImplementedError(g, modes))
 
+# ! when moving all this stuff to NSEBase.jl, a new type parameter for AbstractGrid would be useful to be able to specialise the constructors
+# ! or maybe a new type (like DecomposedGrid) that stores the original grid and can be used for such dispatch
 NSEBase.FTField(grid::ChannelGrid{<:Any, T, <:CuArray}) where {T} = NSEBase.FTField(grid, CUDA.zeros(Complex{T}, transform_size(grid)))
 NSEBase.Field(grid::ChannelGrid{<:Any, T, <:CuArray}; dealias=true) where {T} = NSEBase.Field(grid, CUDA.zeros(T, NSEBase.get_padded_size(size(grid), NSEBase.fft_dims(grid))))
 function NSEBase.ProjectedField(grid::ChannelGrid{<:Any, T, <:CuArray}, modes) where {T}
