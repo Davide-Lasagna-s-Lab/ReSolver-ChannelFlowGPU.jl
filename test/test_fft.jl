@@ -1,5 +1,5 @@
 @testset verbose=true "CUDA FFT plans        " begin
-    @testset "Transform utilities       " begin
+    @testset "transform utilities       " begin
         @testset "_apply_mask!                      " begin
             for sz in ((5,), (5, 6), (3, 4, 5))
                 cache = CUDA.randn(ComplexF64, sz...)
@@ -109,7 +109,7 @@
         end
     end
 
-    @testset "Plan construction        " begin
+    @testset "plan construction        " begin
         for T in [Float64, Float32]
             # 1D: cache is the standard spectral shape, norm = 1/N, fixed threads
             p = CuFFTPlans((8,), (1,), T)
@@ -140,7 +140,7 @@
         end
     end
 
-    @testset "Transform execution       " begin
+    @testset "transform execution       " begin
         # construct plans
         sz = (4, 6, 8)
         odr = (1, 2, 3)

@@ -7,7 +7,7 @@ using CUDA,
 using CUDA: i32
 
 # TODO: benchmark residual
-# TODO: actual tests for construction, galerkin, and dot
+# TODO: actual tests for construction, galerkin, and dot auto-tuning
 
 __init__() = @assert CUDA.functional(true)
 

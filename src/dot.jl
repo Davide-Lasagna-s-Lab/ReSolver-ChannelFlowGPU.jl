@@ -48,7 +48,7 @@ struct DotTwoStage{A} <: DotMethod
         new{typeof(weights)}((weights, intermediate))
     end
 end
-DotTwoStage(a::ProjectedField) = DotTwoStage(size(a), NSEBase.fft_dims(grid(a)), real(eltype(a)))
+DotTwoStage(a::ProjectedField) = DotTwoStage(size(a), NSEBase.fft_dims(NSEBase.grid(a)), real(eltype(a)))
 
 """
     DotAtomic{THREADS, D, A} <: DotMethod
@@ -100,7 +100,9 @@ end
     DotShared{THREADS, D, A} <: DotMethod
 
 DotShared memory tree-reduction dot product method for GPU-resident `ProjectedField`
-arrays.
+arrays. THIS METHOD ONLY WORKS WHEN THE TOTAL NUMBER OF ELEMENTS IS LARGER THAN
+THE EXPECTED THREADS BEING USED. THIS ENSURES THAT THE SHARED DATA ARRAY CAN BE
+REDUCED PROPERLY. (BUG FIX?)
 
 Each thread block performs a local tree reduction into shared memory, then
 contributes a single atomic add to the global result — reducing atomic contention
@@ -146,17 +148,17 @@ struct DotShared{THREADS, D, A} <: DotMethod
         sz = Int32.(size(pa))
         nelem = Int32(prod(sz))
         _nthreads = if isnothing(nthreads)
-                kernel  = @cuda launch=false _dot_shared_kernel!(
-                    result, pa, pa, nelem, sz, Val(256)  # dummy Val — replaced below
-                )
-                nthreads = let config = launch_configuration(kernel.fun;
+            kernel  = @cuda launch=false _dot_shared_kernel!(
+                result, pa, pa, nelem, sz, Val(256)  # dummy Val — replaced below
+            )
+            nthreads = let config = launch_configuration(kernel.fun;
                                         shmem = t -> t * sizeof(T))
                 # round down to nearest power of 2 — required for tree reduction
-                prev_pow2 = 2^floor(Int, log2(config.threads))
+                prev_pow2 = 2^floor(Int32, log2(config.threads))
                 min(prev_pow2, nelem)
             end
         else
-            prev_pow2 = 2^floor(Int, log2(nthreads))
+            prev_pow2 = 2^floor(Int32, log2(nthreads))
             min(prev_pow2, nelem)
         end
         new{_nthreads, length(sz), typeof(result)}(result, sz, nelem)

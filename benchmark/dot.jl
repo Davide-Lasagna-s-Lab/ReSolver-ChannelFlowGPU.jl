@@ -10,7 +10,7 @@ using NSEBase,
 # Benchmark
 # ============================================================
 function run_benchmarks()
-    # Problem size: (ny, nx, nz, nt)
+    # Problem size: (nx, ny, nz, nt)
     S = (33, 16, 33, 33)
     M = 4
     T = Float32
