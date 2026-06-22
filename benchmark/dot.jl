@@ -19,11 +19,10 @@ function run_benchmarks()
                     zeros(S[2], S[2]), zeros(S[2], S[2]),
                     zeros(S[2], S[2]), zeros(S[2], S[2]),
                     zeros(S[2]))
-    throw(error("modes are not being generated correctly for updated interface"))
     a = ProjectedField(g, randn(M, (S[1] >> 1) + 1, S[3], S[4]),
-                          zeros(M, 3*S[2], (S[1] >> 1) + 1, S[3], S[4]))
+                          ntuple(_ -> randn(M, S[2], (S[1] >> 1) + 1, S[3], S[4]), 1))
     b = ProjectedField(g, randn(M, (S[1] >> 1) + 1, S[3], S[4]),
-                          zeros(M, 3*S[2], (S[1] >> 1) + 1, S[3], S[4]))
+                          ntuple(_ -> randn(M, S[2], (S[1] >> 1) + 1, S[3], S[4]), 1))
     ad = CUDA.cu(a)
     bd = CUDA.cu(b)
 
@@ -112,9 +111,9 @@ function run_benchmarks()
                         zeros(sz[2], sz[2]), zeros(sz[2], sz[2]),
                         zeros(sz[2]))
         a_ = ProjectedField(g, randn(M, (sz[1] >> 1) + 1, sz[3], sz[4]),
-                               zeros(3*sz[2], M, (sz[1] >> 1) + 1, sz[3], sz[4]))
+                               ntuple(_ -> zeros(M, sz[2], (sz[1] >> 1) + 1, sz[3], sz[4]), 1))
         b_ = ProjectedField(g, randn(M, (sz[1] >> 1) + 1, sz[3], sz[4]),
-                               zeros(3*sz[2], M, (sz[1] >> 1) + 1, sz[3], sz[4]))
+                               ntuple(_ -> zeros(M, sz[2], (sz[1] >> 1) + 1, sz[3], sz[4]), 1))
         ad_ = CUDA.cu(a_)
         bd_ = CUDA.cu(b_)
 

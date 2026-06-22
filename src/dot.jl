@@ -88,23 +88,11 @@ struct DotAtomic{D, A} <: DotMethod
     result::A
         sz::NTuple{D, Int32}
      nelem::Int32
-   threads::Int32
-    blocks::Int32
 
-    function DotAtomic(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
-        pa = parent(a)
+    function DotAtomic(a::ProjectedField, ::Type{T}=Float32) where {T}
         result = CUDA.zeros(T, 1)
-        sz = Int32.(size(pa))
-        nelem = Int32(prod(sz))
-        _threads = if isnothing(threads)
-            optimal_threads(_dot_atomic_kernel!,
-                            result, pa, pa,
-                            nelem, sz;
-                            max_threads=nelem)
-        else
-            threads
-        end
-        new{length(sz), typeof(result)}(result, sz, nelem, Int32(_threads), cld(nelem, _threads))
+        sz = Int32.(size(a))
+        new{length(sz), typeof(result)}(result, sz, Int32(prod(sz)))
     end
 end
 
@@ -151,27 +139,27 @@ struct DotShared{THREADS, D, A} <: DotMethod
     result::A
         sz::NTuple{D, Int32}
      nelem::Int32
-    blocks::Int32
 
-    function DotShared(a::ProjectedField, ::Type{T}=Float32; threads::Union{Nothing, Int}=nothing) where {T}
+    function DotShared(a::ProjectedField, ::Type{T}=Float32; nthreads::Union{Nothing, Int}=nothing) where {T}
         pa = parent(a)
         result = CUDA.zeros(T, 1)
         sz = Int32.(size(pa))
         nelem = Int32(prod(sz))
-        _threads = if isnothing(threads)
+        _nthreads = if isnothing(nthreads)
                 kernel  = @cuda launch=false _dot_shared_kernel!(
                     result, pa, pa, nelem, sz, Val(256)  # dummy Val — replaced below
                 )
-                threads = let config = launch_configuration(kernel.fun;
+                nthreads = let config = launch_configuration(kernel.fun;
                                         shmem = t -> t * sizeof(T))
-                    # round down to nearest power of 2 — required for tree reduction
-                    prev_pow2 = 2^floor(Int, log2(config.threads))
-                    min(prev_pow2, nelem)
+                # round down to nearest power of 2 — required for tree reduction
+                prev_pow2 = 2^floor(Int, log2(config.threads))
+                min(prev_pow2, nelem)
             end
         else
-            threads
+            prev_pow2 = 2^floor(Int, log2(nthreads))
+            min(prev_pow2, nelem)
         end
-        new{_threads, length(sz), typeof(result)}(result, sz, nelem, cld(nelem, _threads))
+        new{_nthreads, length(sz), typeof(result)}(result, sz, nelem)
     end
 end
 
@@ -381,13 +369,11 @@ function _dot(a::CuArray{T}, b::CuArray{T}, cache::DotAtomic) where {T}
     sz      = cache.sz
     nelem   = cache.nelem
     result  = cache.result
-    threads = cache.threads
-    blocks  = cache.blocks
     CUDA.fill!(result, zero(T))
 
-    @cuda threads=threads blocks=blocks _dot_atomic_kernel!(
-        result, a, b, nelem, sz
-    )
+    kernel_args = (result, a, b, nelem, sz)
+    nthreads = get_launch_params(_dot_atomic_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _dot_atomic_kernel!(kernel_args...)
 
     return Array(result)[1]/2
 end
@@ -402,10 +388,9 @@ function _dot(a::CuArray{T}, b::CuArray{T}, cache::DotShared{THREADS}) where {T,
     sz     = cache.sz
     nelem  = cache.nelem
     result = cache.result
-    blocks = cache.blocks
     CUDA.fill!(result, zero(T))
 
-    @cuda threads=THREADS blocks=blocks _dot_shared_kernel!(
+    @cuda threads=THREADS blocks=Int32(cld(nelem, THREADS)) _dot_shared_kernel!(
         result, a, b, nelem, sz, Val(THREADS)
     )
 

@@ -56,45 +56,26 @@ input types.
 # Fields
 - `sz::NTuple{D, Int32}`: size of `ProjectedField` arrays
 - `nelem::Int32`: total number of elements of `ProjectedField` arrays (`nelem=prod(sz)`)
-- `threads`::Int32: number of GPU threads per block
-- `blocks::Int32`: number of GPU blocks assigned for kernel
 
 # Constructor
-    ProjectLoop(a::ProjectedField, u::VectorField)
+    ProjectLoop(a::ProjectedField)
 
 - `a`: a representative `ProjectedField` used to determine array size and
   query optimal thread count. Not mutated.
-- `u`: a corresponding representative `VectorField` used to determine number
-  of velocity components used for the projection. Not mutated.
 
 # Example
 ```julia
-method = ProjectLoop(a, u)
+method = ProjectLoop(a)
 project!(a, u, method)
 ```
 """
 struct ProjectLoop{D} <: ProjectMethod
         sz::NTuple{D, Int32}
      nelem::Int32
-   threads::Int32
-    blocks::Int32
 
-    function ProjectLoop(a::ProjectedField{<:ChannelGrid{S}},
-                         u::VectorField{N};
-                   threads::Union{Nothing, Int}=nothing) where {N, S}
-        pa = parent(a)
-        sz = Int32.(size(pa))
-        nelem = Int32(prod(sz))
-        _threads = if isnothing(threads)
-            optimal_threads(_project_loop_kernel!,
-                            pa, modes(a), u, NSEBase.grid(u).ws,
-                            sz, nelem,
-                            Val(Int32(N)), Val(Int32(S[2]));
-                            max_threads=nelem)
-        else
-            threads
-        end
-        new{length(sz)}(sz, nelem, Int32(_threads), Int32(cld(nelem, _threads)))
+    function ProjectLoop(a::ProjectedField{<:ChannelGrid{S}}) where {S}
+        sz = Int32.(size(a))
+        new{length(sz)}(sz, Int32(prod(sz)))
     end
 end
 
@@ -111,45 +92,26 @@ global reads to the quadrature weights is a bottleneck in the `ProjectLoop` meth
 # Fields
 - `sz::NTuple{D, Int32}`: size of `ProjectedField` arrays
 - `nelem::Int32`: total number of elements of `ProjectedField` arrays (`nelem=prod(sz)`)
-- `threads`::Int32: number of GPU threads per block
-- `blocks::Int32`: number of GPU blocks assigned for kernel
 
 # Constructor
-    ProjectShared(a::ProjectedField, u::VectorField)
+    ProjectShared(a::ProjectedField)
 
 - `a`: a representative `ProjectedField` used to determine array size and
   query optimal thread count. Not mutated.
-- `u`: a corresponding representative `VectorField` used to determine number
-  of velocity components used for the projection. Not mutated.
 
 # Example
 ```julia
-method = ProjectSahred(a, u)
+method = ProjectSahred(a)
 project!(a, b, method)
 ```
 """
 struct ProjectShared{D} <: ProjectMethod
         sz::NTuple{D, Int32}
      nelem::Int32
-   threads::Int32
-    blocks::Int32
 
-    function ProjectShared(a::ProjectedField{<:ChannelGrid{S}},
-                           u::VectorField{N};
-                     threads::Union{Nothing, Int}=nothing) where {N, S}
-        pa = parent(a)
-        sz = Int32.(size(pa))
-        nelem = Int32(prod(sz))
-        _threads = if isnothing(threads)
-            optimal_threads(_project_shared_kernel!,
-                            pa, modes(a), u, NSEBase.grid(u).ws,
-                            sz, nelem,
-                            Val(Int32(N)), Val(Int32(S[2]));
-                            max_threads=nelem)
-        else
-            threads
-        end
-        new{length(sz)}(sz, nelem, Int32(_threads), Int32(cld(nelem, _threads)))
+    function ProjectShared(a::ProjectedField{<:ChannelGrid{S}}) where {S}
+        sz = Int32.(size(a))
+        new{length(sz)}(sz, Int32(prod(sz)))
     end
 end
 
@@ -195,8 +157,8 @@ function autotune_project(a, u)
     # Construct all candidate methods
     candidates = ProjectMethod[
         ProjectBroadcast(a),
-        ProjectLoop(a, u),
-        ProjectShared(a, u),
+        ProjectLoop(a),
+        ProjectShared(a),
     ]
 
     # Warmup all candidates — triggers compilation
@@ -383,12 +345,10 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}},
                cache::ProjectLoop) where {N, S}
     sz      = cache.sz
     nelem   = cache.nelem
-    threads = cache.threads
-    blocks  = cache.blocks
 
-    @cuda threads=threads blocks=blocks _project_loop_kernel!(
-        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
-    )
+    kernel_args = (parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2])))
+    nthreads = get_launch_params(_project_loop_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _project_loop_kernel!(kernel_args...)
 
     return a
 end
@@ -406,12 +366,10 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}},
                cache::ProjectShared) where {N, S}
     sz      = cache.sz
     nelem   = cache.nelem
-    threads = cache.threads
-    blocks  = cache.blocks
 
-    @cuda threads=threads blocks=blocks _project_shared_kernel!(
-        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
-    )
+    kernel_args = (parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2])))
+    nthreads = get_launch_params(_project_shared_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _project_shared_kernel!(kernel_args...)
 
     return a
 end
@@ -430,12 +388,10 @@ function _project!(a::ProjectedField{<:ChannelGrid{S}}, u::VectorField{N}, ::Pro
     throw(error("this method is broken - use a different one instead"))
     sz = Int32.(size(a))
     nelem = Int32(prod(sz))
-    threads = 256
-    blocks = cld(nelem, threads)
 
-    @cuda threads=threads blocks=blocks _project_warp_kernel!(
-        parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2]))
-    )
+    kernel_args = (parent(a), modes(a), u, NSEBase.grid(a).ws, sz, nelem, Val(Int32(N)), Val(Int32(S[2])))
+    nthreads = get_launch_params(_project_warp_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _project_warp_kernel!(kernel_args...)
 
     return a
 end
@@ -601,20 +557,18 @@ thread instead.
 - `nelem::Int32`: total number of elements of each `VectorField` component arrays
                   (`nelem=prod(sz)`)
 - `nelem_tot::Int32`: total number of elements in the `VectorField` 
-- `threads`::Int32: number of GPU threads per block
-- `blocks::Int32`: number of GPU blocks assigned for kernel
 
 # Constructor
     ExpandModal(u::VectorField,
                 a::ProjectedField,
                 over_vector::Bool=false)
 
-0 `u`: vector field the expansion is assigned to
+- `u`: vector field the expansion is assigned to
 - `a`: projected field the expansion is computed from
 
 # Example
 ```julia
-method = ExpandModal(a)
+method = ExpandModal(u, a)
 expand!(u, a, method)
 ```
 """
@@ -622,36 +576,12 @@ struct ExpandModal{M, VECTOR, D} <: ExpandMethod
         sz::NTuple{D, Int32}
      nelem::Int32
  nelem_tot::Int32
-   threads::Int32
-    blocks::Int32
 
     function ExpandModal(u::VectorField{N},
                          a::ProjectedField,
-               over_vector::Bool=false;
-                   threads::Union{Nothing, Int}=nothing) where {N}
-        M = size(a, 1)
+               over_vector::Bool=false) where {N}
         sz = Int32.(size(u[1]))
-        nelem = Int32(prod(sz))
-        nelem_tot = Int32(N*prod(sz))
-        _threads = if isnothing(threads)
-            if over_vector
-                optimal_threads(_expand_modal_1_kernel!,
-                                u, parent(a), modes(a),
-                                sz, nelem, nelem_tot,
-                                Val(Int32(N)), Val(Int32(M));
-                                max_threads=nelem)
-            else
-                optimal_threads(_expand_modal_2_kernel!,
-                                u, parent(a), modes(a),
-                                sz, nelem,
-                                Val(Int32(N)), Val(Int32(M));
-                                max_threads=nelem)
-            end
-        else
-            threads
-        end
-        blocks = cld(over_vector ? nelem_tot : nelem, _threads)
-        new{M, over_vector, length(sz)}(sz, nelem, nelem_tot, Int32(_threads), Int32(blocks))
+        new{size(a, 1), over_vector, length(sz)}(sz, Int32(prod(sz)), Int32(N*prod(sz)))
     end
 end
 
@@ -886,24 +816,24 @@ function _expand!(u::VectorField{N},
     sz        = cache.sz
     nelem     = cache.nelem
     nelem_tot = cache.nelem_tot
-    threads   = cache.threads
-    blocks    = cache.blocks
 
-    @cuda threads=threads blocks=blocks _expand_modal_1_kernel!(
-        u, parent(a), modes(a), sz, nelem, nelem_tot, Val(N), Val(M)
-    )
+    kernel_args = (u, parent(a), modes(a), sz, nelem, nelem_tot, Val(N), Val(M))
+    nthreads = get_launch_params(_expand_modal_1_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem_tot, nthreads)) _expand_modal_1_kernel!(kernel_args...)
+
+    return u
 end
 function _expand!(u::VectorField{N},
                   a::ProjectedField{<:AbstractGrid{T}},
               cache::ExpandModal{M, false}) where {N, T, M}
     sz        = cache.sz
     nelem     = cache.nelem
-    threads   = cache.threads
-    blocks    = cache.blocks
 
-    @cuda threads=threads blocks=blocks _expand_modal_2_kernel!(
-        u, parent(a), modes(a), sz, nelem, Val(N), Val(M)
-    )
+    kernel_args = (u, parent(a), modes(a), sz, nelem, Val(N), Val(M))
+    nthreads = get_launch_params(_expand_modal_2_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _expand_modal_2_kernel!(kernel_args...)
+
+    return u
 end
 
 # ----------------- #

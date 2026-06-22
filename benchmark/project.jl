@@ -50,8 +50,8 @@ end
 function make_methods(a, u)
     Dict(
         "Broadcast" => ReSolverChannelFlowGPU.ProjectBroadcast(CUDA.cu(a)),
-        "Loop"      => ReSolverChannelFlowGPU.ProjectLoop(CUDA.cu(a), CUDA.cu(u)),
-        "Shared"    => ReSolverChannelFlowGPU.ProjectShared(CUDA.cu(a), CUDA.cu(u)),
+        "Loop"      => ReSolverChannelFlowGPU.ProjectLoop(CUDA.cu(a)),
+        "Shared"    => ReSolverChannelFlowGPU.ProjectShared(CUDA.cu(a)),
         # "Warp"      => ReSolverChannelFlowGPU.ProjectWarp(),
     )
 end

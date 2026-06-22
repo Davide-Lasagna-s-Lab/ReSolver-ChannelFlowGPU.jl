@@ -7,8 +7,6 @@ using CUDA,
 using CUDA: i32
 
 # TODO: benchmark residual
-# TODO: add launch configuration to FDGrids.jl
-# TODO: use LAUNCH_CONFIG for galerkin methods and remove optimal_threads
 # TODO: actual tests for construction, galerkin, and dot
 
 __init__() = @assert CUDA.functional(true)
@@ -35,37 +33,14 @@ and dot product of `ProjectedField`.
 show_tuning_info(show_info::Bool) = TUNING_INFO[] = show_info
 
 
-const LAUNCH_PARAMS = Dict{Tuple{Type, NTuple}, Tuple{Int, Int}}()
+const LAUNCH_PARAMS = Dict{Tuple{Type, NTuple}, Int32}()
 
-function get_launch_params(kernel_f::F, nelem::Int32, kernel_args...) where {F}
+function get_launch_params(kernel_f::F, kernel_args...) where {F}
     key = (F, map(typeof, kernel_args))
     get!(LAUNCH_PARAMS, key) do
-        kernel   = @cuda launch=false kernel_f(kernel_args...)
-        config   = CUDA.launch_configuration(kernel.fun)
-        nthreads = Int32(min(config.threads, nelem))
-        blocks   = Int32(cld(nelem, nthreads))
-        (nthreads, blocks)
+        kernel = @cuda launch=false kernel_f(kernel_args...)
+        Int32(CUDA.launch_configuration(kernel.fun).threads)
     end
-end
-
-"""
-    optimal_threads(kernel!, args...; max_threads=nothing) -> Int
-
-Query the hardware-optimal thread count for a CUDA kernel using
-`launch_configuration`. Compiles the kernel without launching it,
-queries the occupancy, and returns the optimal thread count capped
-at `max_threads` if provided.
-
-# Example
-```julia
-threads = optimal_threads(_ddx_kernel!, out, u, sz, nelem,
-            im*one(T), wavenumber_scale(u, 1), Val(1), Val(ORDER))
-```
-"""
-function optimal_threads(kernel!, args...; max_threads=nothing)
-    k = @cuda launch=false kernel!(args...)
-    threads = launch_configuration(k.fun).threads
-    isnothing(max_threads) ? threads : min(threads, max_threads)
 end
 
 @inline @generated function _linear_to_cart(idx, sz::NTuple{D, Int32}) where {D}

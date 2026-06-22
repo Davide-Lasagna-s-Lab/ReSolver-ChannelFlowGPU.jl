@@ -37,7 +37,6 @@ struct CuFFTPlans{D, T, ORDER, PLAN, IPLAN, CA}
 end
 
 CuFFTPlans(g::NSEBase.AbstractGrid{T}; kwargs...) where {T} = CuFFTPlans(size(g), NSEBase.fft_dims(g), T; kwargs...)
-
 NSEBase.FFTPlans(g::ChannelGrid{<:Any, <:Any, <:CuArray}; kwargs...) = CuFFTPlans(g; kwargs...)
 
 # ------------------------ #
@@ -107,8 +106,8 @@ never passed to the device.
     src_offsets = Int32.(ntuple(k ->  first(br[k]) - first(ar[k]), Val(D)))
 
     kernel_args = (dest, src, dest_starts, dest_sizes, src_offsets, vadd)
-    nthreads, blocks = get_launch_params(_loopblk_kernel!, Int32(prod(dest_sizes)), kernel_args...)
-    @cuda threads=nthreads blocks=blocks _loopblk_kernel!(kernel_args...)
+    nthreads = get_launch_params(_loopblk_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(prod(dest_sizes), nthreads)) _loopblk_kernel!(kernel_args...)
     return nothing
 end
 

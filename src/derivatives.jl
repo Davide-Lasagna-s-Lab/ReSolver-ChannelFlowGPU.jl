@@ -23,8 +23,8 @@ function NSEBase.ddx!(out::F,
 
     # launch kernel
     kernel_args = (parent(out), parent(u), sz, nelem, _ddx_sign, _ddx_scale, Val(Int32(DIM)), Val(Int32.(ORDER)))
-    nthreads, blocks = get_launch_params(_ddx_kernel!, nelem, kernel_args...)
-    @cuda threads=nthreads blocks=blocks _ddx_kernel!(kernel_args...)
+    nthreads = get_launch_params(_ddx_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _ddx_kernel!(kernel_args...)
 
     return out
 end
@@ -69,8 +69,8 @@ function NSEBase.add_homogeneous_laplacian!(out::FTField{G, A},
 
     # launch kernel
     kernel_args = (parent(out), parent(u), sz, nelem, scales, Val(Int32.(spatial_fft_dims(NSEBase.grid(u)))), Val(Int32(NSEBase.fft_dims(NSEBase.grid(u))[1])))
-    nthreads, blocks = get_launch_params(_add_homogeneous_laplacian_kernel!, nelem, kernel_args...)
-    @cuda threads=nthreads blocks=blocks _add_homogeneous_laplacian_kernel!(kernel_args...)
+    nthreads = get_launch_params(_add_homogeneous_laplacian_kernel!, kernel_args...)
+    @cuda threads=nthreads blocks=Int32(cld(nelem, nthreads)) _add_homogeneous_laplacian_kernel!(kernel_args...)
 
     return out
 end
