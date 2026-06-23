@@ -1,20 +1,18 @@
 # GPU kernels for derivatives of FTFields wrapping CuArrays.
 
-NSEBase.ddx_1!(out, u; adjoint=false) = ddx!(out, u, Val(2); adjoint=adjoint)
-function NSEBase.ddx_2!(out::FTField{G}, u::FTField{G}; adjoint::Bool=false, nthreads=nothing) where {G<:ChannelGrid}
-    mul!(parent(out), adjoint ? NSEBase.grid(u).D₁⁺ : NSEBase.grid(u).D₁, parent(u), Val(1); nthreads=nthreads)
+# ! when this is transferred to NSEBase.jl I need to find a way to get rid of this method
+function NSEBase.ddx!(out::FTField{G, <:CuArray},
+                        u::FTField{G, <:CuArray},
+                         ::Val{1};
+                  adjoint::Bool=false) where {G<:AbstractChannelGrid}
+    LinearAlgebra.mul!(parent(out), adjoint ? NSEBase.grid(u).D₁⁺ : NSEBase.grid(u).D₁, parent(u), Val(1))
     return out
 end
-NSEBase.ddx_4!(out, u; adjoint=false) = ddx!(out, u, Val(4); adjoint=adjoint)
-NSEBase.ddx_3!(out, u; adjoint=false) = ddx!(out, u, Val(3); adjoint=adjoint)
 
 function NSEBase.ddx!(out::F,
                         u::F,
                          ::Val{DIM};
-                  adjoint::Bool=false) where {DIM, T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, M, F<:Union{FTField{G, <:CuArray}, ProjectedField{G, M, <:CuArray}}}
-    (isnothing(DIM) || isnothing(AXES[DIM])) && return :(return out)
-    DIM ∉ ORDER && return :(throw(NSEBase.NotImplementedError(NSEBase.grid(u), Val($DIM))))
-
+                  adjoint::Bool=false) where {DIM, T, D, AXES, ORDER, G<:AbstractGrid{T, D, AXES, ORDER}, F<:Union{FTField{G, <:CuArray}, ProjectedField{G, <:Any, <:CuArray}}}
     # kernel arguments
     sz     = Int32.(size(u))
     nelem  = Int32(prod(sz))
@@ -49,19 +47,8 @@ end
 end
 
 
-
-function NSEBase.laplacian!(out::FTField{G, <:CuArray}, u::FTField{G, <:CuArray}; nthreads=nothing, kwargs...) where {G}
-    NSEBase.inhomogeneous_laplacian!(out, u; nthreads=nthreads, kwargs...)
-    NSEBase.add_homogeneous_laplacian!(out, u)
-end
-
-function NSEBase.inhomogeneous_laplacian!(out::FTField{G, <:CuArray}, u::FTField{G, <:CuArray}; adjoint::Bool=false, nthreads=nothing) where {G<:AbstractChannelGrid{<:Any, <:Any}}
-    LinearAlgebra.mul!(parent(out), adjoint ? NSEBase.grid(u).D₂⁺ : NSEBase.grid(u).D₂, parent(u), Val(1), nthreads=nthreads)
-    return out
-end
-
-function NSEBase.add_homogeneous_laplacian!(out::FTField{G, A},
-                                              u::FTField{G, A}) where {G<:AbstractGrid, A<:CuArray}
+function NSEBase.add_homogeneous_laplacian!(out::FTField{G, <:CuArray},
+                                              u::FTField{G, <:CuArray}) where {G<:AbstractGrid}
     # kernel arguments
     sz     = Int32.(size(u))
     nelem  = Int32(prod(sz))

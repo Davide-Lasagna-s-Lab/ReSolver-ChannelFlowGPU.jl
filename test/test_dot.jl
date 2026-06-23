@@ -7,7 +7,7 @@
                     zeros(Ny, Ny), zeros(Ny, Ny),
                     zeros(Ny))
     M = 5
-    Ψ = ntuple(n -> zeros(M, Ny, (Nx >> 1) + 1, Nz, Nt), 1)
+    Ψ = ntuple(n -> zeros(ComplexF64, M, Ny, (Nx >> 1) + 1, Nz, Nt), 1)
 
     # construct projected fields
     a = ProjectedField(g, randn(M, (Nx >> 1) + 1, Nz, Nt), Ψ); ad = CUDA.cu(a)
@@ -32,7 +32,7 @@
                     zeros(Ny, Ny), zeros(Ny, Ny),
                     zeros(Ny, Ny), zeros(Ny, Ny),
                     zeros(Ny))
-    Ψ2 = ntuple(n -> zeros(2, Ny, (3 >> 1) + 1, 1, 1), 1)
+    Ψ2 = ntuple(n -> zeros(ComplexF64, 2, Ny, (3 >> 1) + 1, 1, 1), 1)
     ad2 = CUDA.cu(ProjectedField(g2, randn(2, (3 >> 1) + 1, 1, 1), Ψ))
 
     @testset "auto-tuning" begin
