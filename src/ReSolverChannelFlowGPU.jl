@@ -17,9 +17,9 @@ using NSEBase,
 
 export show_tuning_info
 export CuFFTPlans
-export DotTwoStage, DotAtomic, DotShared
-export ProjectBroadcast, ProjectLoop, ProjectShared
-export ExpandBroadcast, ExpandModal
+export reset_dot_cache!, dot_method, DotTwoStage, DotAtomic, DotShared
+export reset_project_cache!, project_method, ProjectBroadcast, ProjectLoop, ProjectShared
+export reset_expand_cache!, expand_method, ExpandBroadcast, ExpandModal
 export FTFieldGPU, FieldGPU, ProjectedFieldGPU
 
 const TUNING_INFO = Ref(false)

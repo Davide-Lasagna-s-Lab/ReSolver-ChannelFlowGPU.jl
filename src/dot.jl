@@ -205,7 +205,7 @@ function autotune_dot(a::ProjectedField{G, M, <:CuArray{T}}) where {G, M, T}
 
     # Construct all candidate methods
     candidates = DotMethod[
-        DotTwoStage(sz, NSEBase.fft_dims(grid(a)), real(T)),
+        DotTwoStage(sz, NSEBase.fft_dims(NSEBase.grid(a)), real(T)),
         DotAtomic(a, real(T)),
         DotShared(a, real(T)),
     ]
